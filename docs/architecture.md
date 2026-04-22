@@ -1,9 +1,9 @@
 # Architecture Notes
 
-Ban dau du an duoc tach theo 3 luong lon:
+Ban đầu dự án được tách theo 3 luồng lớn:
 
 1. Data plane: ingest -> Kafka -> Spark -> Cassandra
 2. Control plane: RabbitMQ cho retry, orchestration, notification
-3. Serving plane: API va dashboard doc tu Cassandra
+3. Serving plane: API và dashboard đọc từ Cassandra
 
-Tai lieu nay la noi de bo sung architecture diagram, topic catalog va query patterns.
+Tài liệu này là nơi để bổ sung architecture diagram, topic catalog và query patterns.

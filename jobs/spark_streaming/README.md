@@ -1,3 +1,3 @@
 # Spark Streaming Job
 
-Noi chua pipeline Spark Structured Streaming doc tu Kafka, xu ly event va ghi Cassandra.
+Nơi chứa pipeline Spark Structured Streaming đọc từ Kafka, xử lý event và ghi vào Cassandra.

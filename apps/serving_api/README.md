@@ -1,3 +1,3 @@
 # Serving API
 
-Service tra cuu request status, latest prediction va prediction history tu Cassandra.
+Service tra cứu request status, latest prediction và prediction history từ Cassandra.

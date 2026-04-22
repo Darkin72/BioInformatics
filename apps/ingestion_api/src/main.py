@@ -2,7 +2,7 @@
 
 
 def main() -> None:
-    print("ingestion_api placeholder")
+    print("Ingestion API placeholder")
 
 
 if __name__ == "__main__":

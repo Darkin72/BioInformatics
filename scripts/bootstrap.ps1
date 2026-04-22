@@ -1,2 +1,2 @@
 Write-Host "Bootstrap placeholder"
-Write-Host "Add topic creation, queue setup, and keyspace initialization here."
+Write-Host "Thêm phần tạo topic, queue và khởi tạo keyspace tại đây."

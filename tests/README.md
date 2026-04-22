@@ -1,3 +1,3 @@
 # Tests
 
-Thu muc danh cho unit test, integration test va test contracts.
+Thư mục dành cho unit test, integration test và test contracts.

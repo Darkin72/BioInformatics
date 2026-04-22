@@ -1,3 +1,3 @@
 # Contracts
 
-Noi luu event schema va tai lieu contract producer-consumer.
+Nơi lưu event schema và tài liệu contract giữa producer-consumer.

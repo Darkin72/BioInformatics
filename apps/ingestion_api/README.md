@@ -1,3 +1,3 @@
 # Ingestion API
 
-Service nhan du lieu protein tu API hoac replay service va day event vao streaming backbone.
+Service nhận dữ liệu protein từ API hoặc replay service và đẩy event vào streaming backbone.

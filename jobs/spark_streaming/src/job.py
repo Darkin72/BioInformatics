@@ -2,7 +2,7 @@
 
 
 def run() -> None:
-    print("spark_streaming job placeholder")
+    print("Spark streaming job placeholder")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 
 def main() -> None:
-    print("serving_api placeholder")
+    print("Serving API placeholder")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,3 @@
 # Inference Package
 
-Module ML duoc tach thanh cac lop preprocess, feature, predict va postprocess de de tich hop vao Spark hoac service rieng.
+Module ML được tách thành các lớp preprocess, feature, predict và postprocess để dễ tích hợp vào Spark hoặc service riêng.

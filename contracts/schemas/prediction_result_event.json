@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PredictionResultEvent",
+  "type": "object",
+  "required": ["request_id", "protein_id", "predicted_at", "model_version", "predicted_terms"],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "protein_id": {
+      "type": "string"
+    },
+    "predicted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "predicted_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence_summary": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+services:
+  kafka:
+    image: bitnami/kafka:latest
+    profiles: ["placeholder"]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    profiles: ["placeholder"]
+
+  cassandra:
+    image: cassandra:5
+    profiles: ["placeholder"]
+
+  spark:
+    image: bitnami/spark:latest
+    profiles: ["placeholder"]

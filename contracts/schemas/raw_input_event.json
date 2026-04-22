@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RawProteinInputEvent",
+  "type": "object",
+  "required": ["request_id", "protein_id", "sequence", "source", "event_time"],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "protein_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

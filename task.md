@@ -739,11 +739,11 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **6.2 Dashboard**
 
-- [ ] Dashboard throughput theo thời gian
+- [x] Dashboard throughput theo thời gian
 - [ ] Dashboard latency từng stage
 - [ ] Dashboard error distribution
-- [ ] Dashboard số lượng request theo trạng thái
-- [ ] Dashboard recent predictions
+- [x] Dashboard số lượng request theo trạng thái
+- [x] Dashboard recent predictions
 
 **6.3 Auth và access control (nếu cần)**
 
@@ -1047,7 +1047,7 @@ Dưới đây là backlog rất nhỏ, có thể đưa vào Jira/Trello.
 - [ ] J1. Dashboard Kafka lag
 - [ ] J2. Dashboard Spark batch duration
 - [ ] J3. Dashboard Cassandra write latency
-- [ ] J4. Dashboard request status counts
+- [x] J4. Dashboard request status counts
 - [ ] J5. Dashboard failed request trend
 - [ ] J6. Alert node down Cassandra
 - [ ] J7. Alert Kafka lag spike
@@ -1233,4 +1233,4 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 - [ ] Ghi raw events và request status vào Cassandra
 - [ ] Đóng gói inference module v1
 - [ ] API lấy request status và latest prediction
-- [ ] Dashboard throughput + error rate cơ bản
+- [x] Dashboard throughput + error rate cơ bản

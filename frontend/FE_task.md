@@ -82,13 +82,13 @@ Nội dung:
 
 Task:
 
-- [ ] Tạo layout dashboard chính.
-- [ ] Tạo metric cards.
+- [x] Tạo layout dashboard chính.
+- [x] Tạo metric cards.
 - [ ] Tạo line chart throughput.
 - [ ] Tạo chart latency theo stage.
-- [ ] Tạo bảng recent predictions.
-- [ ] Tạo bảng recent failed requests.
-- [ ] Thêm auto refresh hoặc nút refresh thủ công.
+- [x] Tạo bảng recent predictions.
+- [x] Tạo bảng recent failed requests.
+- [x] Thêm auto refresh hoặc nút refresh thủ công.
 
 Acceptance criteria:
 
@@ -123,11 +123,11 @@ Validation frontend:
 
 Task:
 
-- [ ] Tạo form submit protein.
-- [ ] Validate sequence ngay trên client.
-- [ ] Gọi API tạo request.
-- [ ] Hiển thị `request_id` sau khi submit thành công.
-- [ ] Có link chuyển sang trang request status.
+- [x] Tạo form submit protein.
+- [x] Validate sequence ngay trên client.
+- [x] Gọi API tạo request.
+- [x] Hiển thị `request_id` sau khi submit thành công.
+- [x] Có link chuyển sang trang request status.
 
 Acceptance criteria:
 
@@ -162,10 +162,10 @@ Nội dung:
 
 Task:
 
-- [ ] Tạo page request detail.
-- [ ] Gọi API lấy trạng thái request.
-- [ ] Hiển thị status badge thống nhất.
-- [ ] Thêm polling khi request chưa hoàn tất.
+- [x] Tạo page request detail.
+- [x] Gọi API lấy trạng thái request.
+- [x] Hiển thị status badge thống nhất.
+- [x] Thêm polling khi request chưa hoàn tất.
 - [ ] Thêm nút retry nếu request failed và backend cho phép.
 
 Acceptance criteria:
@@ -195,11 +195,11 @@ Nội dung:
 
 Task:
 
-- [ ] Tạo ô search protein id.
-- [ ] Tạo page latest prediction.
-- [ ] Hiển thị top terms dạng bảng.
-- [ ] Format score thống nhất.
-- [ ] Hiển thị empty state nếu chưa có prediction.
+- [x] Tạo ô search protein id.
+- [x] Tạo page latest prediction.
+- [x] Hiển thị top terms dạng bảng.
+- [x] Format score thống nhất.
+- [x] Hiển thị empty state nếu chưa có prediction.
 
 Acceptance criteria:
 
@@ -478,14 +478,14 @@ Nguyên tắc:
 
 ### P0 - Bắt buộc cho demo đầu tiên
 
-- [ ] Setup routing.
-- [ ] Tạo layout app chính.
-- [ ] Tạo API client.
-- [ ] Tạo mock API hoặc cấu hình API base URL.
-- [ ] Màn hình submit protein.
-- [ ] Màn hình request status.
-- [ ] Màn hình latest prediction.
-- [ ] Dashboard metric cards cơ bản.
+- [x] Setup routing.
+- [x] Tạo layout app chính.
+- [x] Tạo API client.
+- [x] Tạo mock API hoặc cấu hình API base URL.
+- [x] Màn hình submit protein.
+- [x] Màn hình request status.
+- [x] Màn hình latest prediction.
+- [x] Dashboard metric cards cơ bản.
 
 ### P1 - Nên có
 
@@ -510,12 +510,12 @@ Nguyên tắc:
 
 ### Sprint FE 1
 
-- [ ] Dọn template Vite mặc định.
-- [ ] Tạo app shell và navigation.
-- [ ] Tạo API client dùng `VITE_API_BASE_URL`.
-- [ ] Tạo mock data để phát triển độc lập backend.
-- [ ] Làm Submit Protein page.
-- [ ] Làm Request Status page.
+- [x] Dọn template Vite mặc định.
+- [x] Tạo app shell và navigation.
+- [x] Tạo API client dùng `VITE_API_BASE_URL`.
+- [x] Tạo mock data để phát triển độc lập backend.
+- [x] Làm Submit Protein page.
+- [x] Làm Request Status page.
 
 Deliverable:
 
@@ -524,11 +524,11 @@ Deliverable:
 
 ### Sprint FE 2
 
-- [ ] Làm Latest Prediction page.
+- [x] Làm Latest Prediction page.
 - [ ] Làm Prediction History page.
-- [ ] Làm Dashboard overview.
-- [ ] Tích hợp chart cơ bản.
-- [ ] Chuẩn hóa status badge, table, loading/error state.
+- [x] Làm Dashboard overview.
+- [x] Tích hợp chart cơ bản.
+- [x] Chuẩn hóa status badge, table, loading/error state.
 
 Deliverable:
 
@@ -541,7 +541,7 @@ Deliverable:
 - [ ] Làm retry action.
 - [ ] Kết nối API backend thật.
 - [ ] Xử lý lỗi API thống nhất.
-- [ ] Chạy build/lint.
+- [x] Chạy build/lint.
 
 Deliverable:
 
@@ -573,4 +573,3 @@ Một task frontend được xem là xong khi:
 - Polling quá dày có thể tạo tải không cần thiết; mặc định 5-10 giây cho request đang xử lý là đủ.
 - Cần thống nhất format status từ backend sớm để UI không phải mapping quá nhiều.
 - Cần thống nhất format GO term: `term_id`, `term_name`, `ontology`, `score`.
-

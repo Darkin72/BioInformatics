@@ -191,6 +191,11 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Local model artifacts
+cafa6_high_performance_artifacts/
+cafa6_new_sequence_predictions/
+cafa6_modal/.env
+
 # PyPI configuration file
 .pypirc
 

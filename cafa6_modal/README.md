@@ -72,6 +72,10 @@ Expected output is JSON with `predictions`, `records`, and `model` fields. The `
 
 Use these steps if you do not have a Modal endpoint yet and want to deploy your own.
 
+### Folder cafa6_high_performance_artifacts can be found at:
+
+https://drive.google.com/drive/folders/1DoFUaywdEyFdZJVyRK9i5X1G6D3x5j1S?usp=sharing
+
 ```bash
 pip install modal
 modal setup

@@ -106,6 +106,12 @@ bash cafa6_modal/scripts/upload_artifacts.sh ./cafa6_high_performance_artifacts
 modal serve cafa6_modal/modal_app.py
 ```
 
+or
+
+```bash
+bash cafa6_modal/scripts/deploy.sh
+```
+
 ## 4. Deploy
 
 ```bash

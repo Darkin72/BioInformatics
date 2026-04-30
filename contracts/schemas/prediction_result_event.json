@@ -2,7 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PredictionResultEvent",
   "type": "object",
-  "required": ["request_id", "protein_id", "predicted_at", "model_version", "predicted_terms"],
+  "required": [
+    "request_id",
+    "protein_id",
+    "predicted_at",
+    "model_version",
+    "feature_version",
+    "predicted_terms",
+    "score_map",
+    "predictions"
+  ],
   "properties": {
     "request_id": {
       "type": "string"
@@ -17,14 +26,57 @@
     "model_version": {
       "type": "string"
     },
+    "feature_version": {
+      "type": "string"
+    },
     "predicted_terms": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
+    "score_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "predictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model", "protein_id", "go_term", "score"],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "protein_id": {
+            "type": "string"
+          },
+          "go_term": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "aspect": {
+            "type": ["string", "null"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "threshold_used": {
+      "type": ["number", "null"]
+    },
+    "latency_ms": {
+      "type": ["integer", "null"]
+    },
     "confidence_summary": {
-      "type": "string"
+      "type": ["string", "null"]
     }
   },
   "additionalProperties": false

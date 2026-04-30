@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RawProteinInputEvent",
   "type": "object",
-  "required": ["request_id", "protein_id", "sequence", "source", "event_time"],
+  "required": ["request_id", "protein_id", "sequence", "source", "event_time", "checksum"],
   "properties": {
     "request_id": {
       "type": "string"
@@ -11,7 +11,9 @@
       "type": "string"
     },
     "sequence": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[ACDEFGHIKLMNPQRSTVWYBXZUOJ]+$",
+      "maxLength": 20000
     },
     "source": {
       "type": "string"
@@ -23,6 +25,10 @@
     "metadata": {
       "type": "object",
       "additionalProperties": true
+    },
+    "checksum": {
+      "type": "string",
+      "description": "SHA-256 checksum of the normalized protein sequence."
     }
   },
   "additionalProperties": false

@@ -1,16 +1,137 @@
 services:
   kafka:
-    image: bitnami/kafka:latest
-    profiles: ["placeholder"]
+    image: apache/kafka:3.7.0
+    container_name: protein-kafka
+    ports:
+      - "9092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+
+  kafka-init:
+    image: apache/kafka:3.7.0
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      "sleep 10 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic protein.raw-input.v1 --partitions 6 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic protein.validated-input.v1 --partitions 6 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic protein.prediction-result.v1 --partitions 6 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic protein.dead-letter.v1 --partitions 3 --replication-factor 1"
+    restart: "no"
 
   rabbitmq:
-    image: rabbitmq:3-management
-    profiles: ["placeholder"]
+    image: rabbitmq:3.13-management
+    container_name: protein-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
 
   cassandra:
-    image: cassandra:5
-    profiles: ["placeholder"]
+    image: cassandra:5.0
+    container_name: protein-cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: protein-rt-local
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+      - ../cassandra/schema.cql:/schema.cql:ro
 
-  spark:
-    image: bitnami/spark:latest
-    profiles: ["placeholder"]
+  cassandra-init:
+    image: cassandra:5.0
+    depends_on:
+      - cassandra
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      "until /opt/cassandra/bin/cqlsh cassandra 9042 -e 'DESCRIBE KEYSPACES'; do sleep 5; done;
+      /opt/cassandra/bin/cqlsh cassandra 9042 -f /schema.cql"
+    volumes:
+      - ../cassandra/schema.cql:/schema.cql:ro
+    restart: "no"
+
+  ingestion-api:
+    build:
+      context: ../..
+      dockerfile: apps/ingestion_api/Dockerfile
+    container_name: protein-ingestion-api
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: protein_rt
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    restart: unless-stopped
+
+  serving-api:
+    build:
+      context: ../..
+      dockerfile: apps/serving_api/Dockerfile
+    container_name: protein-serving-api
+    depends_on:
+      cassandra-init:
+        condition: service_completed_successfully
+    ports:
+      - "8002:8002"
+    environment:
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: protein_rt
+    restart: unless-stopped
+
+  spark-streaming:
+    build:
+      context: ../..
+      dockerfile: jobs/spark_streaming/Dockerfile
+    container_name: protein-spark-streaming
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+    env_file:
+      - ../../cafa6_modal/.env
+    ports:
+      - "4040:4040"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: protein_rt
+      CAFA6_TOP_K: 50
+    restart: unless-stopped
+
+volumes:
+  kafka_data:
+  rabbitmq_data:
+  cassandra_data:

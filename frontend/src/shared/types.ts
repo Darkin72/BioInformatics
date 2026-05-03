@@ -6,6 +6,26 @@ export type RequestStatus =
   | 'retrying'
   | 'cancelled'
 
+export type UserRole = 'viewer' | 'operator' | 'admin'
+
+export interface AuthUser {
+  username: string
+  display_name: string
+  roles: UserRole[]
+}
+
+export interface LoginCredentials {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: 'bearer'
+  expires_in: number
+  user: AuthUser
+}
+
 export interface InferenceRequest {
   request_id: string
   protein_id: string

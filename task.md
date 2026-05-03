@@ -551,8 +551,8 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **2.4 Local/dev infrastructure**
 
-- [ ] Viết Docker Compose cho Kafka, RabbitMQ, Cassandra, Spark
-- [ ] Viết script bootstrap topic/queue/keyspace
+- [x] Viết Docker Compose cho Kafka, RabbitMQ, Cassandra, Spark
+- [x] Viết script bootstrap topic/queue/keyspace
 - [ ] Kiểm tra end-to-end dev environment
 
 #### Deliverable
@@ -1223,7 +1223,7 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 - [ ] Data team: profiling CAFA-6 + chuẩn hóa event schema
 - [ ] ML team: chọn 1 solution competition + chạy baseline offline
 - [ ] Backend team: dựng skeleton API + request tracking
-- [ ] Platform team: Docker Compose cho Kafka/RabbitMQ/Cassandra/Spark
+- [x] Platform team: Docker Compose cho Kafka/RabbitMQ/Cassandra/Spark
 - [ ] Data engineering: replay service phát stream từ CAFA-6
 - [ ] Backend + data engineering: thiết kế Cassandra schema v1
 

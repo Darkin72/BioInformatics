@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BOOTSTRAP_SERVER="${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+KAFKA_TOPICS_BIN="${KAFKA_TOPICS_BIN:-/opt/kafka/bin/kafka-topics.sh}"
+
+topics=(
+  "raw_protein_input"
+  "validated_protein_input"
+  "inference_request"
+  "prediction_result"
+  "dead_letter"
+)
+
+for topic in "${topics[@]}"; do
+  "${KAFKA_TOPICS_BIN}" \
+    --bootstrap-server "${BOOTSTRAP_SERVER}" \
+    --create \
+    --if-not-exists \
+    --topic "${topic}" \
+    --partitions 3 \
+    --replication-factor 1
+done
+
+"${KAFKA_TOPICS_BIN}" --bootstrap-server "${BOOTSTRAP_SERVER}" --list

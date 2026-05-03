@@ -1,8 +1,11 @@
 import type {
+  AuthUser,
   CreateInferenceRequestPayload,
   DashboardSummary,
   InferenceRequest,
   LatestPrediction,
+  LoginCredentials,
+  LoginResponse,
   PipelineMetricPoint,
   RequestStatus,
 } from './types'
@@ -95,6 +98,62 @@ const predictions: LatestPrediction[] = [
     ],
   },
 ]
+
+const demoUsers: Record<string, AuthUser & { password: string }> = {
+  viewer: {
+    username: 'viewer',
+    password: 'viewer123',
+    display_name: 'Viewer',
+    roles: ['viewer'],
+  },
+  operator: {
+    username: 'operator',
+    password: 'operator123',
+    display_name: 'Pipeline Operator',
+    roles: ['viewer', 'operator'],
+  },
+  admin: {
+    username: 'admin',
+    password: 'admin123',
+    display_name: 'Admin',
+    roles: ['viewer', 'operator', 'admin'],
+  },
+}
+
+export async function mockLogin(
+  credentials: LoginCredentials,
+): Promise<LoginResponse> {
+  await delay(250)
+  const username = credentials.username.trim().toLowerCase()
+  const user = demoUsers[username]
+
+  if (!user || user.password !== credentials.password) {
+    throw new Error('Invalid username or password.')
+  }
+
+  return {
+    access_token: `mock.${username}.${Date.now()}`,
+    token_type: 'bearer',
+    expires_in: 3600,
+    user: toPublicUser(user),
+  }
+}
+
+export async function mockGetCurrentUser(token: string | null) {
+  await delay(150)
+
+  if (!token) {
+    return null
+  }
+
+  const username = token.split('.')[1]
+  const user = username ? demoUsers[username] : undefined
+  return user ? toPublicUser(user) : null
+}
+
+export async function mockLogout() {
+  await delay(100)
+}
 
 const throughput: PipelineMetricPoint[] = Array.from({ length: 8 }).map(
   (_, index) => {
@@ -198,4 +257,12 @@ function delay(ms: number) {
 
 function minutesAgo(minutes: number) {
   return new Date(now.getTime() - minutes * 60_000).toISOString()
+}
+
+function toPublicUser(user: AuthUser & { password: string }): AuthUser {
+  return {
+    username: user.username,
+    display_name: user.display_name,
+    roles: user.roles,
+  }
 }

@@ -4,7 +4,17 @@ version = "0.1.0"
 description = "Minimal skeleton for a realtime protein function prediction platform."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["apps*", "contracts*", "jobs*", "ml*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

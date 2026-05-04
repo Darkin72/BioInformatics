@@ -2,9 +2,19 @@
 .venv
 __pycache__
 *.pyc
+*.log
 .pytest_cache
 .ruff_cache
+.mypy_cache
 cafa6
 cafa6_high_performance_artifacts
 *.ipynb
+.env
+
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+data
+tmp
 

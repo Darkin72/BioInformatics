@@ -17,6 +17,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
+from apps.serving_api.src.cafa6_client import (
+    Cafa6AnalysisError,
+    Cafa6ValidationError,
+    run_cafa6_analysis,
+)
+
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
 JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", "3600"))
@@ -129,10 +135,6 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def minutes_ago(minutes: int) -> str:
-    return (utc_now() - timedelta(minutes=minutes)).isoformat()
-
-
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
@@ -155,92 +157,9 @@ USERS = {
     },
 }
 
-REQUESTS: list[InferenceRequest] = [
-    InferenceRequest(
-        request_id="demo-processing-001",
-        protein_id="P12345",
-        created_at=minutes_ago(22),
-        updated_at=minutes_ago(1),
-        current_status="processing",
-        stage_name="model_inference",
-        retry_count=0,
-        model_version="baseline-cafa6-v1",
-        feature_version="esm2-lite-v1",
-    ),
-    InferenceRequest(
-        request_id="demo-completed-001",
-        protein_id="Q8N158",
-        created_at=minutes_ago(74),
-        updated_at=minutes_ago(69),
-        current_status="completed",
-        stage_name="prediction_written",
-        retry_count=0,
-        model_version="baseline-cafa6-v1",
-        feature_version="esm2-lite-v1",
-    ),
-    InferenceRequest(
-        request_id="demo-failed-001",
-        protein_id="BADSEQ01",
-        created_at=minutes_ago(38),
-        updated_at=minutes_ago(37),
-        current_status="failed",
-        stage_name="validation",
-        error_code="INVALID_SEQUENCE",
-        error_message="Sequence contains unsupported amino acid symbols.",
-        retry_count=1,
-    ),
-]
-
-PREDICTIONS: list[LatestPrediction] = [
-    LatestPrediction(
-        protein_id="P12345",
-        request_id="demo-completed-002",
-        predicted_at=minutes_ago(9),
-        model_version="baseline-cafa6-v1",
-        confidence_summary="High confidence molecular function prediction.",
-        top_terms=[
-            PredictionTerm(
-                term_id="GO:0005524",
-                term_name="ATP binding",
-                ontology="MF",
-                score=0.934,
-            ),
-            PredictionTerm(
-                term_id="GO:0004672",
-                term_name="protein kinase activity",
-                ontology="MF",
-                score=0.887,
-            ),
-            PredictionTerm(
-                term_id="GO:0006468",
-                term_name="protein phosphorylation",
-                ontology="BP",
-                score=0.842,
-            ),
-        ],
-    ),
-    LatestPrediction(
-        protein_id="Q8N158",
-        request_id="demo-completed-001",
-        predicted_at=minutes_ago(69),
-        model_version="baseline-cafa6-v1",
-        confidence_summary="Moderate confidence cellular component prediction.",
-        top_terms=[
-            PredictionTerm(
-                term_id="GO:0005634",
-                term_name="nucleus",
-                ontology="CC",
-                score=0.774,
-            ),
-            PredictionTerm(
-                term_id="GO:0003677",
-                term_name="DNA binding",
-                ontology="MF",
-                score=0.713,
-            ),
-        ],
-    ),
-]
+REQUESTS: list[InferenceRequest] = []
+PREDICTIONS: list[LatestPrediction] = []
+REQUEST_LATENCIES_MS: dict[str, int] = {}
 
 
 def base64url_encode(raw: bytes) -> str:
@@ -354,21 +273,44 @@ def require_roles(*allowed_roles: Role):
 
 
 def build_throughput() -> list[PipelineMetricPoint]:
-    values = [74, 88, 91, 107, 96, 113, 124, 118]
+    now = utc_now()
     points: list[PipelineMetricPoint] = []
-    for index, value in enumerate(values):
-        start = utc_now() - timedelta(minutes=(7 - index) * 5)
+    for index in range(8):
+        start = now - timedelta(minutes=(7 - index) * 5)
         end = start + timedelta(minutes=5)
+        value = sum(
+            1
+            for request in REQUESTS
+            if start <= datetime.fromisoformat(request.created_at) < end
+        )
         points.append(
             PipelineMetricPoint(
                 window_start=start.isoformat(),
                 window_end=end.isoformat(),
                 metric_name="throughput_per_minute",
                 metric_value=value,
-                tags={"source": "serving_api"},
+                tags={"source": "cafa6_modal_endpoint"},
             )
         )
     return points
+
+
+def calculate_latency_ms() -> tuple[int, int]:
+    values = sorted(REQUEST_LATENCIES_MS.values())
+    if not values:
+        return 0, 0
+
+    average = round(sum(values) / len(values))
+    p95_index = min(len(values) - 1, round((len(values) - 1) * 0.95))
+    return average, values[p95_index]
+
+
+def is_today(iso_timestamp: str) -> bool:
+    return datetime.fromisoformat(iso_timestamp).date() == utc_now().date()
+
+
+def latest_predictions(limit: int = 10) -> list[LatestPrediction]:
+    return sorted(PREDICTIONS, key=lambda item: item.predicted_at, reverse=True)[:limit]
 
 
 @app.get("/health")
@@ -428,15 +370,18 @@ def get_pipeline_summary(
             status_counts.get(request.current_status, 0) + 1
         )
 
-    total_today = 28418 if window == "minute" else len(REQUESTS)
+    total_today = sum(1 for request in REQUESTS if is_today(request.created_at))
+    failed_count = status_counts.get("failed", 0)
+    error_rate = failed_count / len(REQUESTS) if REQUESTS else 0
+    avg_latency_ms, p95_latency_ms = calculate_latency_ms()
     return DashboardSummary(
         total_today=total_today,
         status_counts=status_counts,
-        avg_latency_ms=1280,
-        p95_latency_ms=3420,
-        error_rate=0.018,
+        avg_latency_ms=avg_latency_ms,
+        p95_latency_ms=p95_latency_ms,
+        error_rate=round(error_rate, 4),
         throughput=build_throughput(),
-        recent_predictions=PREDICTIONS,
+        recent_predictions=latest_predictions(),
         recent_failed_requests=[
             request for request in REQUESTS if request.current_status == "failed"
         ],
@@ -453,16 +398,78 @@ def create_inference_request(
     payload: CreateInferenceRequestPayload,
     _: UserPublic = Depends(require_roles("operator", "admin")),
 ) -> InferenceRequest:
+    request_id = f"api-{uuid.uuid4()}"
+    created_at = utc_now().isoformat()
+    protein_id = payload.protein_id.strip()
+
+    if not protein_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="protein_id is required",
+        )
+
+    try:
+        analysis = run_cafa6_analysis(protein_id=protein_id, sequence=payload.sequence)
+    except Cafa6ValidationError as exc:
+        failed = InferenceRequest(
+            request_id=request_id,
+            protein_id=protein_id,
+            created_at=created_at,
+            updated_at=utc_now().isoformat(),
+            current_status="failed",
+            stage_name="validation",
+            error_code="INVALID_SEQUENCE",
+            error_message=str(exc),
+            retry_count=0,
+        )
+        REQUESTS.insert(0, failed)
+        return failed
+    except Cafa6AnalysisError as exc:
+        failed = InferenceRequest(
+            request_id=request_id,
+            protein_id=protein_id,
+            created_at=created_at,
+            updated_at=utc_now().isoformat(),
+            current_status="failed",
+            stage_name="external_analysis",
+            error_code="ANALYSIS_API_ERROR",
+            error_message=str(exc),
+            retry_count=0,
+        )
+        REQUESTS.insert(0, failed)
+        return failed
+
     created = InferenceRequest(
-        request_id=f"api-{uuid.uuid4()}",
-        protein_id=payload.protein_id,
-        created_at=utc_now().isoformat(),
+        request_id=request_id,
+        protein_id=protein_id,
+        created_at=created_at,
         updated_at=utc_now().isoformat(),
-        current_status="pending",
-        stage_name="queued",
+        current_status="completed",
+        stage_name="prediction_written",
         retry_count=0,
+        model_version=analysis.model_version,
+        feature_version=analysis.feature_version,
     )
     REQUESTS.insert(0, created)
+    REQUEST_LATENCIES_MS[request_id] = analysis.latency_ms
+
+    prediction = LatestPrediction(
+        protein_id=protein_id,
+        request_id=request_id,
+        predicted_at=created.updated_at or utc_now().isoformat(),
+        model_version=analysis.model_version,
+        top_terms=[
+            PredictionTerm(
+                term_id=term.term_id,
+                term_name=term.term_name,
+                ontology=term.ontology,
+                score=term.score,
+            )
+            for term in analysis.top_terms
+        ],
+        confidence_summary=analysis.confidence_summary,
+    )
+    PREDICTIONS.insert(0, prediction)
     return created
 
 
@@ -473,10 +480,6 @@ def get_inference_request(
 ) -> InferenceRequest:
     for request in REQUESTS:
         if request.request_id == request_id:
-            if request.current_status == "pending":
-                request.current_status = "processing"
-                request.stage_name = "validation"
-                request.updated_at = utc_now().isoformat()
             return request
 
     raise HTTPException(

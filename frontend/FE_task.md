@@ -1,4 +1,4 @@
-# Frontend Task Plan
+# Kế hoạch tác vụ frontend
 
 ## 1. Mục tiêu frontend
 
@@ -38,7 +38,7 @@ Frontend hiện là project **React + TypeScript + Vite** trong thư mục `fron
 
 ---
 
-## 3. Tech stack đề xuất
+## 3. Công nghệ đề xuất
 
 ### Đang có
 
@@ -63,7 +63,7 @@ Không nên thêm quá nhiều framework UI nặng trước khi chốt thiết k
 
 ### 4.1 `/`
 
-Tên màn hình: **Overview Dashboard**
+Tên màn hình: **Dashboard tổng quan**
 
 Mục tiêu:
 
@@ -77,8 +77,8 @@ Nội dung:
 - Throughput theo phút/giờ.
 - Latency trung bình/p95 theo stage.
 - Error rate.
-- Recent predictions.
-- Recent failed requests.
+- Prediction gần đây.
+- Request lỗi gần đây.
 
 Task:
 
@@ -90,9 +90,9 @@ Task:
 - [x] Tạo bảng recent failed requests.
 - [x] Thêm auto refresh hoặc nút refresh thủ công.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
-- Dashboard đọc được dữ liệu từ API hoặc mock service.
+- Dashboard đọc được dữ liệu từ Serving API thật.
 - Loading, empty, error state không làm vỡ layout.
 - Số liệu có timestamp cập nhật cuối cùng.
 
@@ -100,7 +100,7 @@ Acceptance criteria:
 
 ### 4.2 `/submit`
 
-Tên màn hình: **Submit Protein**
+Tên màn hình: **Gửi protein**
 
 Mục tiêu:
 
@@ -129,7 +129,7 @@ Task:
 - [x] Hiển thị `request_id` sau khi submit thành công.
 - [x] Có link chuyển sang trang request status.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
 - Không gửi request nếu input sai format.
 - Submit thành công hiển thị request id rõ ràng.
@@ -139,7 +139,7 @@ Acceptance criteria:
 
 ### 4.3 `/requests/:requestId`
 
-Tên màn hình: **Request Status**
+Tên màn hình: **Trạng thái request**
 
 Mục tiêu:
 
@@ -168,7 +168,7 @@ Task:
 - [x] Thêm polling khi request chưa hoàn tất.
 - [ ] Thêm nút retry nếu request failed và backend cho phép.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
 - Status đang xử lý tự cập nhật theo chu kỳ cấu hình được.
 - Request failed hiển thị lý do lỗi và thao tác retry.
@@ -177,7 +177,7 @@ Acceptance criteria:
 
 ### 4.4 `/proteins/:proteinId/latest`
 
-Tên màn hình: **Latest Prediction**
+Tên màn hình: **Prediction mới nhất**
 
 Mục tiêu:
 
@@ -201,7 +201,7 @@ Task:
 - [x] Format score thống nhất.
 - [x] Hiển thị empty state nếu chưa có prediction.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
 - Tra cứu protein id trực tiếp được.
 - Top terms dễ scan, có sort theo score giảm dần.
@@ -210,7 +210,7 @@ Acceptance criteria:
 
 ### 4.5 `/proteins/:proteinId/history`
 
-Tên màn hình: **Prediction History**
+Tên màn hình: **Lịch sử prediction**
 
 Mục tiêu:
 
@@ -236,7 +236,7 @@ Task:
 - [ ] Cho phép mở chi tiết một prediction.
 - [ ] Thêm phân trang hoặc infinite load nếu dữ liệu lớn.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
 - Filter date range hoạt động.
 - Không render danh sách quá dài gây chậm UI.
@@ -245,7 +245,7 @@ Acceptance criteria:
 
 ### 4.6 `/failed-requests`
 
-Tên màn hình: **Failed Requests**
+Tên màn hình: **Request lỗi**
 
 Mục tiêu:
 
@@ -273,7 +273,7 @@ Task:
 - [ ] Thêm confirm trước khi retry.
 - [ ] Update lại bảng sau retry.
 
-Acceptance criteria:
+Tiêu chí chấp nhận:
 
 - Chỉ hiện retry action khi request retryable.
 - Retry thành công có feedback rõ ràng.
@@ -314,25 +314,25 @@ Response:
 }
 ```
 
-### Get request status
+### Lấy trạng thái request
 
 ```http
 GET /api/inference-requests/{request_id}
 ```
 
-### Get latest prediction
+### Lấy prediction mới nhất
 
 ```http
 GET /api/proteins/{protein_id}/latest-prediction
 ```
 
-### Get prediction history
+### Lấy lịch sử prediction
 
 ```http
 GET /api/proteins/{protein_id}/prediction-history?from=2026-04-01T00:00:00Z&to=2026-04-27T23:59:59Z
 ```
 
-### List failed requests
+### Liệt kê request lỗi
 
 ```http
 GET /api/failed-requests?date=2026-04-27&status_code=VALIDATION_ERROR
@@ -344,7 +344,7 @@ GET /api/failed-requests?date=2026-04-27&status_code=VALIDATION_ERROR
 POST /api/inference-requests/{request_id}/retry
 ```
 
-### Get pipeline metrics
+### Lấy metric pipeline
 
 ```http
 GET /api/metrics/pipeline?from=2026-04-27T00:00:00Z&to=2026-04-27T23:59:59Z&window=minute
@@ -460,7 +460,7 @@ Nguyên tắc:
   - Submit
   - Requests
   - Predictions
-  - Failed Requests
+  - Request lỗi
 - Status dùng màu nhất quán:
   - `pending`: xám
   - `processing`: xanh dương
@@ -481,16 +481,16 @@ Nguyên tắc:
 - [x] Setup routing.
 - [x] Tạo layout app chính.
 - [x] Tạo API client.
-- [x] Tạo mock API hoặc cấu hình API base URL.
-- [x] Màn hình submit protein.
-- [x] Màn hình request status.
-- [x] Màn hình latest prediction.
+- [x] Cấu hình API base URL và gọi Serving API thật.
+- [x] Màn hình gửi protein.
+- [x] Màn hình trạng thái request.
+- [x] Màn hình prediction mới nhất.
 - [x] Dashboard metric cards cơ bản.
 
 ### P1 - Nên có
 
-- [ ] Prediction history.
-- [ ] Failed requests.
+- [ ] Lịch sử prediction.
+- [ ] Request lỗi.
 - [ ] Retry request.
 - [ ] Throughput/latency/error chart.
 - [ ] Auto refresh dashboard.
@@ -513,20 +513,20 @@ Nguyên tắc:
 - [x] Dọn template Vite mặc định.
 - [x] Tạo app shell và navigation.
 - [x] Tạo API client dùng `VITE_API_BASE_URL`.
-- [x] Tạo mock data để phát triển độc lập backend.
-- [x] Làm Submit Protein page.
-- [x] Làm Request Status page.
+- [x] Gỡ dữ liệu giả lập và chuyển sang Serving API thật.
+- [x] Làm page gửi protein.
+- [x] Làm page trạng thái request.
 
 Deliverable:
 
-- Người dùng submit sequence mock được.
-- Người dùng xem trạng thái request mock được.
+- Người dùng submit sequence thật qua Serving API được.
+- Người dùng xem trạng thái request thật qua Serving API được.
 
 ### Sprint FE 2
 
-- [x] Làm Latest Prediction page.
-- [ ] Làm Prediction History page.
-- [x] Làm Dashboard overview.
+- [x] Làm page prediction mới nhất.
+- [ ] Làm page lịch sử prediction.
+- [x] Làm dashboard tổng quan.
 - [x] Tích hợp chart cơ bản.
 - [x] Chuẩn hóa status badge, table, loading/error state.
 
@@ -537,7 +537,7 @@ Deliverable:
 
 ### Sprint FE 3
 
-- [ ] Làm Failed Requests page.
+- [ ] Làm page request lỗi.
 - [ ] Làm retry action.
 - [ ] Kết nối API backend thật.
 - [ ] Xử lý lỗi API thống nhất.
@@ -550,7 +550,7 @@ Deliverable:
 
 ---
 
-## 11. Definition of Done
+## 11. Định nghĩa hoàn thành
 
 Một task frontend được xem là xong khi:
 
@@ -568,7 +568,7 @@ Một task frontend được xem là xong khi:
 
 ## 12. Rủi ro và lưu ý
 
-- Backend API chưa chốt thì FE nên có mock layer để không bị chặn.
+- Frontend phụ thuộc Serving API thật; khi backend thay đổi contract cần cập nhật API client và type tương ứng.
 - Dataset và prediction term có thể lớn, tránh render toàn bộ danh sách một lần.
 - Polling quá dày có thể tạo tải không cần thiết; mặc định 5-10 giây cho request đang xử lý là đủ.
 - Cần thống nhất format status từ backend sớm để UI không phải mapping quá nhiều.

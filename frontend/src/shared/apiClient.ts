@@ -1,9 +1,9 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  'http://localhost:8000'
 const TOKEN_STORAGE_KEY = 'protein-function.access-token'
 
 let accessToken = window.localStorage.getItem(TOKEN_STORAGE_KEY)
-
-export const isMockApi = !API_BASE_URL
 
 export function getAccessToken() {
   return accessToken
@@ -23,10 +23,6 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new Error('API base URL is not configured')
-  }
-
   const headers = new Headers(options.headers)
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')

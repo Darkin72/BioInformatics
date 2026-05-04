@@ -104,7 +104,7 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
           value={formatLatency(summary.avg_latency_ms)}
         />
         <MetricCard
-          detail={`${summary.status_counts.failed} failed requests in mock store`}
+          detail={`${summary.status_counts.failed} failed requests`}
           label="Error rate"
           value={formatPercent(summary.error_rate)}
         />
@@ -144,7 +144,7 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
             <h2>Recent predictions</h2>
             <button
               className="link-button"
-              onClick={() => navigate('/proteins/P12345/latest')}
+              onClick={() => navigate('/predictions')}
               type="button"
             >
               Open search

@@ -43,6 +43,8 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+tmp/
+stress-results.jsonl
 nosetests.xml
 coverage.xml
 *.cover

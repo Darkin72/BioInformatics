@@ -1,52 +1,63 @@
-# Docker local stack
+# Stack Docker local
 
-Thu muc nay chua cau hinh Docker cho moi truong local/dev cua du an:
+Thư mục này chứa cấu hình Docker cho môi trường local/dev của dự án:
 
-- `backend/Dockerfile`: dong goi FastAPI Serving API.
-- `frontend/Dockerfile`: build React/Vite va serve bang Nginx.
-- `frontend/nginx.conf`: cau hinh SPA fallback cho frontend.
-- `kafka/create-topics.sh`: tao cac topic theo `task.md`.
-- `cassandra/init-schema.sh`: nap `infra/cassandra/schema.cql` vao Cassandra.
+- `backend/Dockerfile`: đóng gói FastAPI Serving API.
+- `frontend/Dockerfile`: build React/Vite và phục vụ bằng Nginx.
+- `frontend/nginx.conf`: cấu hình SPA fallback cho frontend.
+- `kafka/create-topics.sh`: tạo các topic theo `task.md`.
+- `cassandra/init-schema.sh`: nạp `infra/cassandra/schema.cql` vào Cassandra.
+- `postgres/init.sql`: tạo schema PostgreSQL ban đầu cho metadata/quản trị.
 
-Tu root repo, chay:
+Từ root repo, chạy các service chính:
 
 ```powershell
 docker compose up -d --build
 ```
 
-Sau khi stack san sang:
+Nếu mới tạo volume hoặc vừa chạy `docker compose down -v`, bootstrap topic/schema bằng init job chạy một lần:
+
+```powershell
+docker compose run --rm kafka-init
+docker compose run --rm cassandra-init
+```
+
+Hai container init này sẽ tự bị xóa sau khi chạy xong vì dùng `--rm`.
+
+Sau khi stack sẵn sàng:
 
 - Frontend: http://localhost:5173
 - Serving API: http://localhost:8000
 - API health: http://localhost:8000/health
 - RabbitMQ Management: http://localhost:15672
+- PostgreSQL: `localhost:5432`
 - Spark Master UI: http://localhost:8080
 - Spark Worker UI: http://localhost:8081
 - Kafka external bootstrap: `localhost:9092`
 - Cassandra CQL: `localhost:9042`
 
-Tai khoan demo cua frontend/API:
+Tài khoản demo của frontend/API:
 
-| Username | Password |
+| Tên đăng nhập | Mật khẩu |
 | --- | --- |
 | `viewer` | `viewer123` |
 | `operator` | `operator123` |
 | `admin` | `admin123` |
 
-Kiem tra nhanh:
+Kiểm tra nhanh:
 
 ```powershell
 docker compose ps
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-Dung stack:
+Dừng stack:
 
 ```powershell
 docker compose down
 ```
 
-Xoa ca volume local:
+Xóa cả volume local:
 
 ```powershell
 docker compose down -v

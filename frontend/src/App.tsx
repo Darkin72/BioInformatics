@@ -22,8 +22,7 @@ type Route =
 const navItems = [
   { label: 'Overview', path: '/' },
   { label: 'Submit', path: '/submit' },
-  { label: 'Requests', path: '/requests/demo-processing-001' },
-  { label: 'Predictions', path: '/proteins/P12345/latest' },
+  { label: 'Predictions', path: '/predictions' },
 ]
 
 function parseRoute(pathname: string): Route {

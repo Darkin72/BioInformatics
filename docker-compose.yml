@@ -17,9 +17,16 @@ services:
       CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
       CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
       CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://protein:protein@postgres:5432/protein_metadata}
+      CAFA6_HEALTH_URL: ${CAFA6_HEALTH_URL:-}
+      CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
+      CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-60}
     ports:
       - "${API_HOST_PORT:-8000}:8000"
     depends_on:
+      postgres:
+        condition: service_healthy
       cassandra:
         condition: service_healthy
       kafka:
@@ -85,6 +92,7 @@ services:
   kafka-init:
     image: apache/kafka:4.2.0
     container_name: bioinformatics-kafka-init
+    profiles: ["init"]
     depends_on:
       kafka:
         condition: service_healthy
@@ -106,6 +114,25 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: bioinformatics-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-protein_metadata}
+      POSTGRES_USER: ${POSTGRES_USER:-protein}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-protein}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-protein} -d ${POSTGRES_DB:-protein_metadata}"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -135,6 +162,7 @@ services:
   cassandra-init:
     image: cassandra:5.0
     container_name: bioinformatics-cassandra-init
+    profiles: ["init"]
     depends_on:
       cassandra:
         condition: service_healthy
@@ -189,4 +217,5 @@ services:
 volumes:
   kafka_data:
   rabbitmq_data:
+  postgres_data:
   cassandra_data:

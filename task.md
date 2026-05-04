@@ -8,6 +8,7 @@ Xây dựng một hệ thống **dự đoán chức năng protein theo thời gi
 - **RabbitMQ** cho các job/event cần định tuyến linh hoạt, retry, orchestration giữa service
 - **Spark Structured Streaming** cho xử lý dòng, feature engineering, scoring, aggregation
 - **Cassandra** làm kho dữ liệu Big Data phục vụ ghi/đọc phân tán, độ sẵn sàng cao, truy vấn time-series/event-centric và serving gần realtime
+- **PostgreSQL** làm SQL database cho metadata quản trị, model registry, replay campaign, user/role và audit log thao tác
 
 Nguồn dữ liệu gốc dự kiến:
 
@@ -30,7 +31,8 @@ Hệ thống cần hỗ trợ các chức năng sau:
 3. Trích xuất feature / embedding / input tensor phù hợp với solution đã chọn
 4. Chạy pipeline suy luận để dự đoán chức năng protein (ví dụ GO terms)
 5. Ghi kết quả dự đoán, metadata, log xử lý, trạng thái pipeline vào Cassandra
-6. Cho phép downstream system hoặc dashboard truy vấn:
+6. Lưu metadata quan hệ và audit thao tác vào PostgreSQL
+7. Cho phép downstream system hoặc dashboard truy vấn:
    - protein vừa vào hệ thống
    - trạng thái xử lý
    - kết quả dự đoán mới nhất
@@ -103,6 +105,12 @@ Spark Structured Streaming
 - Tối ưu cho write-heavy workload
 - Hỗ trợ scale ngang mạnh
 - Dùng làm serving store cho lịch sử prediction, trạng thái job, event log, feature snapshot, prediction timeline
+
+#### PostgreSQL
+
+- Lưu dữ liệu quan hệ và metadata cần transaction/constraint rõ ràng
+- Phù hợp cho user, role, permission, model registry, dataset catalog, replay campaign và audit log
+- Không thay thế Cassandra cho raw event, prediction history lớn hoặc metrics time-series dày
 
 ---
 
@@ -551,7 +559,7 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **2.4 Local/dev infrastructure**
 
-- [x] Viết Docker Compose cho Kafka, RabbitMQ, Cassandra, Spark
+- [x] Viết Docker Compose cho Kafka, RabbitMQ, Cassandra, PostgreSQL, Spark
 - [x] Viết script bootstrap topic/queue/keyspace
 - [ ] Kiểm tra end-to-end dev environment
 
@@ -610,6 +618,28 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 - [ ] Chuẩn hóa retry policy phía application
 - [ ] Thêm idempotency logic cho ghi prediction
 - [ ] Viết integration test cho từng bảng
+
+### Giai đoạn 3B - Thiết kế và triển khai PostgreSQL metadata store (1-2 tuần)
+
+#### Mục tiêu
+
+- Bổ sung SQL database cho dữ liệu quản trị cần quan hệ, constraint và audit rõ ràng
+- Tách metadata quản trị khỏi Cassandra để Cassandra tập trung vào stream/time-series workload
+
+#### Task nhỏ
+
+- [x] Thêm PostgreSQL vào Docker Compose local stack
+- [x] Tạo schema ban đầu cho dataset catalog, model registry, replay campaign và operator audit log
+- [ ] Thiết kế bảng user/role/permission nếu auth chuyển khỏi in-memory
+- [ ] Thêm migration tool như Alembic cho schema PostgreSQL
+- [ ] Viết repository/service cho PostgreSQL trong Serving API
+- [ ] Kết nối model registry và replay campaign vào API/dashboard
+
+#### Deliverable
+
+- PostgreSQL local service
+- SQL schema metadata v1
+- Data access layer PostgreSQL v1
 
 #### Deliverable
 
@@ -1003,6 +1033,17 @@ Dưới đây là backlog rất nhỏ, có thể đưa vào Jira/Trello.
 - [ ] F9. Benchmark ghi 10k/100k rows
 - [ ] F10. Benchmark query latest prediction
 
+### Epic F2 - PostgreSQL metadata foundation
+
+- [x] F2.1. Thêm service PostgreSQL vào Docker Compose
+- [x] F2.2. Tạo schema metadata ban đầu
+- [ ] F2.3. Thiết kế bảng user/role/permission
+- [ ] F2.4. Thiết kế bảng model registry đầy đủ
+- [ ] F2.5. Thiết kế bảng dataset/replay campaign đầy đủ
+- [ ] F2.6. Viết migration bằng Alembic
+- [ ] F2.7. Tích hợp Serving API với PostgreSQL
+- [ ] F2.8. Viết integration test cho PostgreSQL repository
+
 ### Epic G - Spark streaming pipeline
 
 - [ ] G1. Tạo Spark project skeleton
@@ -1223,7 +1264,7 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 - [ ] Data team: profiling CAFA-6 + chuẩn hóa event schema
 - [ ] ML team: chọn 1 solution competition + chạy baseline offline
 - [ ] Backend team: dựng skeleton API + request tracking
-- [x] Platform team: Docker Compose cho Kafka/RabbitMQ/Cassandra/Spark
+- [x] Platform team: Docker Compose cho Kafka/RabbitMQ/Cassandra/PostgreSQL/Spark
 - [ ] Data engineering: replay service phát stream từ CAFA-6
 - [ ] Backend + data engineering: thiết kế Cassandra schema v1
 
@@ -1232,5 +1273,6 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 - [ ] Spark đọc Kafka và validate event
 - [ ] Ghi raw events và request status vào Cassandra
 - [ ] Đóng gói inference module v1
-- [ ] API lấy request status và latest prediction
+- [x] API lấy request status và latest prediction bằng CAFA-6 Modal endpoint trên sequence thật
 - [x] Dashboard throughput + error rate cơ bản
+- [x] Script stress test gửi nhiều file sequence đồng thời vào Serving API thật

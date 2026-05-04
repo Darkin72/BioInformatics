@@ -1,6 +1,9 @@
-const API_BASE_URL =
+export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
   'http://localhost:8000'
+export const EVENTS_BASE_URL =
+  (import.meta.env.VITE_EVENTS_BASE_URL as string | undefined) ||
+  'http://localhost:8003'
 const TOKEN_STORAGE_KEY = 'protein-function.access-token'
 
 let accessToken = window.localStorage.getItem(TOKEN_STORAGE_KEY)

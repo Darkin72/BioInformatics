@@ -4,59 +4,59 @@ import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
 import { StatusBadge } from '../../components/StatusBadge'
 import { formatDateTime } from '../../shared/date'
-import type { InferenceRequest } from '../../shared/types'
-import { getRequestStatus } from './requestsApi'
+import type { RequestResult } from '../../shared/types'
+import { getRequestResult } from './requestsApi'
 
 interface RequestStatusPageProps {
   requestId: string
+  isAdmin: boolean
   navigate: (path: string) => void
 }
 
 const pollingStatuses = new Set(['pending', 'processing', 'retrying'])
 
+function formatScore(score: number) {
+  return `${(score * 100).toFixed(1)}%`
+}
+
+function formatOntology(ontology?: string | null) {
+  const normalized = ontology?.toUpperCase()
+  if (normalized === 'MF' || normalized === 'MFO' || normalized === 'F') {
+    return 'Molecular Function'
+  }
+  if (normalized === 'BP' || normalized === 'BPO' || normalized === 'P') {
+    return 'Biological Process'
+  }
+  if (normalized === 'CC' || normalized === 'CCO' || normalized === 'C') {
+    return 'Cellular Component'
+  }
+  return ontology ?? '-'
+}
+
 export function RequestStatusPage({
+  isAdmin,
   requestId,
   navigate,
 }: RequestStatusPageProps) {
   const [remoteState, setRemoteState] = useState<{
     requestId: string
-    request: InferenceRequest | null
+    result: RequestResult | null
     error: string | null
   }>({
     requestId: '',
-    request: null,
+    result: null,
     error: null,
   })
-
-  async function loadRequest() {
-    try {
-      const data = await getRequestStatus(requestId)
-      setRemoteState({
-        requestId,
-        request: { ...data },
-        error: null,
-      })
-    } catch (loadError) {
-      setRemoteState({
-        requestId,
-        request: null,
-        error:
-          loadError instanceof Error
-            ? loadError.message
-            : 'Unable to load request status.',
-      })
-    }
-  }
 
   useEffect(() => {
     let isActive = true
 
-    getRequestStatus(requestId)
+    getRequestResult(requestId)
       .then((data) => {
         if (isActive) {
           setRemoteState({
             requestId,
-            request: { ...data },
+            result: data,
             error: null,
           })
         }
@@ -65,7 +65,7 @@ export function RequestStatusPage({
         if (isActive) {
           setRemoteState({
             requestId,
-            request: null,
+            result: null,
             error:
               loadError instanceof Error
                 ? loadError.message
@@ -79,8 +79,9 @@ export function RequestStatusPage({
     }
   }, [requestId])
 
-  const request =
-    remoteState.requestId === requestId ? remoteState.request : null
+  const result =
+    remoteState.requestId === requestId ? remoteState.result : null
+  const request = result?.request ?? null
   const error = remoteState.requestId === requestId ? remoteState.error : null
   const isLoading = remoteState.requestId !== requestId
 
@@ -90,18 +91,18 @@ export function RequestStatusPage({
     }
 
     const intervalId = window.setInterval(() => {
-      getRequestStatus(requestId)
+      getRequestResult(requestId)
         .then((data) => {
           setRemoteState({
             requestId,
-            request: { ...data },
+            result: data,
             error: null,
           })
         })
         .catch((loadError: unknown) => {
           setRemoteState({
             requestId,
-            request: null,
+            result: null,
             error:
               loadError instanceof Error
                 ? loadError.message
@@ -125,17 +126,160 @@ export function RequestStatusPage({
     return <EmptyState message="Request not found." />
   }
 
+  const prediction = result?.prediction ?? null
+  const requestInput = result?.input ?? null
+  const topTerm = prediction?.top_terms[0] ?? null
+  const predictedAt = prediction?.predicted_at
+    ? formatDateTime(prediction.predicted_at)
+    : null
+
   return (
     <section className="page-stack">
       <div className="section-header">
         <div>
-          <h2>Request status</h2>
+          <h2>Request result</h2>
           <p className="mono">{request.request_id}</p>
         </div>
         <StatusBadge status={request.current_status} />
       </div>
 
       <section className="panel">
+        <div className="section-header compact">
+          <h2>Input sequence</h2>
+          {requestInput?.sequence_length ? (
+            <span>{requestInput.sequence_length} amino acids</span>
+          ) : null}
+        </div>
+
+        {requestInput ? (
+          <div className="input-result">
+            <dl className="prediction-summary">
+              <div>
+                <dt>Protein</dt>
+                <dd>{requestInput.protein_id}</dd>
+              </div>
+              <div>
+                <dt>Length</dt>
+                <dd>{requestInput.sequence_length ?? '-'}</dd>
+              </div>
+              {isAdmin ? (
+                <div>
+                  <dt>Source</dt>
+                  <dd>{requestInput.source ?? request.source ?? '-'}</dd>
+                </div>
+              ) : null}
+              {isAdmin ? (
+                <div>
+                  <dt>Metadata</dt>
+                  <dd>
+                    {requestInput.metadata
+                      ? JSON.stringify(requestInput.metadata)
+                      : '-'}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+            {requestInput.sequence ? (
+              <pre className="sequence-view">{requestInput.sequence}</pre>
+            ) : (
+              <EmptyState message="Input sequence was not stored for this request." />
+            )}
+          </div>
+        ) : (
+          <EmptyState message="Input was not stored for this request." />
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="section-header compact">
+          <h2>Prediction result</h2>
+          {predictedAt ? <span>{predictedAt}</span> : null}
+        </div>
+
+        {prediction && topTerm ? (
+          <div className="prediction-result">
+            <div className="prediction-highlight">
+              <div>
+                <span>Top GO term</span>
+                <strong>{topTerm.term_id}</strong>
+                <p>{topTerm.term_name ?? 'Unnamed ontology term'}</p>
+              </div>
+            </div>
+
+            <dl className="prediction-summary">
+              <div>
+                <dt>Protein</dt>
+                <dd>{prediction.protein_id}</dd>
+              </div>
+              <div>
+                <dt>Ontology</dt>
+                <dd>{formatOntology(topTerm.ontology)}</dd>
+              </div>
+              <div>
+                <dt>Model</dt>
+                <dd>{prediction.model_version}</dd>
+              </div>
+              <div>
+                <dt>Terms returned</dt>
+                <dd>{prediction.top_terms.length}</dd>
+              </div>
+            </dl>
+
+            {prediction.confidence_summary ? (
+              <p className="result-summary">{prediction.confidence_summary}</p>
+            ) : null}
+          </div>
+        ) : request.current_status === 'completed' ? (
+          <EmptyState message="No prediction result is available for this request." />
+        ) : (
+          <EmptyState message="The server has not returned a result for this request yet." />
+        )}
+
+        {prediction?.top_terms.length ? (
+          <div className="label-result-grid">
+            {prediction.top_terms.map((term, index) => {
+              const labelScorePercent = Math.max(0, Math.min(100, term.score * 100))
+
+              return (
+                <section
+                  className="label-result-card"
+                  key={`${term.term_id}-${term.ontology ?? ''}-${index}`}
+                >
+                  <div className="label-result-header">
+                    <span>Term {index + 1}</span>
+                    <strong>{formatScore(term.score)}</strong>
+                  </div>
+                  <div>
+                    <h3>{term.term_name ?? 'Unnamed ontology term'}</h3>
+                    <p className="mono">{term.term_id}</p>
+                  </div>
+                  {term.definition ? (
+                    <p className="term-definition">{term.definition}</p>
+                  ) : null}
+                  <dl className="label-result-details">
+                    <div>
+                      <dt>Ontology</dt>
+                      <dd>{formatOntology(term.ontology)}</dd>
+                    </div>
+                    <div>
+                      <dt>Confidence</dt>
+                      <dd>{formatScore(term.score)}</dd>
+                    </div>
+                  </dl>
+                  <div className="score-track">
+                    <div style={{ width: `${labelScorePercent}%` }} />
+                  </div>
+                </section>
+              )
+            })}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel">
+        <div className="section-header compact">
+          <h2>Request metadata</h2>
+        </div>
         <dl className="detail-grid">
           <div>
             <dt>Protein ID</dt>
@@ -176,15 +320,19 @@ export function RequestStatusPage({
         ) : null}
 
         <div className="actions-row">
-          <button className="secondary-button" onClick={loadRequest} type="button">
-            Refresh
+          <button
+            className="secondary-button"
+            onClick={() => navigate('/my/requests')}
+            type="button"
+          >
+            Back to my requests
           </button>
           <button
             className="secondary-button"
             onClick={() => navigate(`/proteins/${request.protein_id}/latest`)}
             type="button"
           >
-            Open latest prediction
+            Open protein requests
           </button>
         </div>
       </section>

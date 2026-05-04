@@ -3,8 +3,8 @@
 Thư mục này chứa cấu hình Docker cho môi trường local/dev của dự án:
 
 - `backend/Dockerfile`: đóng gói FastAPI Serving API.
-- `frontend/Dockerfile`: build React/Vite và phục vụ bằng Nginx.
-- `frontend/nginx.conf`: cấu hình SPA fallback cho frontend.
+- `frontend/Dockerfile`: chạy React/Vite dev server bằng `npm run dev`.
+- `frontend/nginx.conf`: cấu hình SPA fallback cũ, không dùng trong compose dev hiện tại.
 - `kafka/create-topics.sh`: tạo các topic theo `task.md`.
 - `cassandra/init-schema.sh`: nạp `infra/cassandra/schema.cql` vào Cassandra.
 - `postgres/init.sql`: tạo schema PostgreSQL ban đầu cho metadata/quản trị.
@@ -61,4 +61,18 @@ Xóa cả volume local:
 
 ```powershell
 docker compose down -v
+```
+
+## Notification service
+
+Stack local co them `notification-service` tren port `8003`.
+
+- Consume Kafka topics: `request_status`, `prediction_result`, `dead_letter`.
+- Ghi Cassandra serving tables: `requests_by_day`, `requests_by_status_window`, `requests_by_user_window`, `request_timeline_by_id`, `prediction_history_by_protein`, `pipeline_metrics_by_window`.
+- Phat SSE cho frontend tai `http://localhost:8003/api/events/dashboard`.
+
+Kiem tra nhanh:
+
+```powershell
+Invoke-RestMethod http://localhost:8003/health
 ```

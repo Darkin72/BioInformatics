@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuthPage } from './features/auth/AuthPage'
+import { AdminRequestsPage } from './features/admin/AdminRequestsPage'
+import { AdminUsersPage } from './features/admin/AdminUsersPage'
 import {
   canCreateInferenceRequest,
   getCurrentUser,
@@ -7,6 +9,7 @@ import {
 } from './features/auth/authApi'
 import { DashboardPage } from './features/dashboard/DashboardPage'
 import { LatestPredictionPage } from './features/predictions/LatestPredictionPage'
+import { MyRequestsPage } from './features/requests/MyRequestsPage'
 import { RequestStatusPage } from './features/requests/RequestStatusPage'
 import { SubmitProteinPage } from './features/submitProtein/SubmitProteinPage'
 import { LoadingState } from './components/LoadingState'
@@ -15,12 +18,18 @@ import './App.css'
 
 type Route =
   | { name: 'dashboard' }
+  | { name: 'adminRequests' }
+  | { name: 'adminUsers' }
+  | { name: 'myRequests' }
   | { name: 'submit' }
   | { name: 'request'; requestId: string }
   | { name: 'latestPrediction'; proteinId?: string }
 
 const navItems = [
   { label: 'Overview', path: '/' },
+  { label: 'My requests', path: '/my/requests' },
+  { label: 'Admin requests', path: '/admin/requests', adminOnly: true },
+  { label: 'Admin users', path: '/admin/users', adminOnly: true },
   { label: 'Submit', path: '/submit' },
   { label: 'Predictions', path: '/predictions' },
 ]
@@ -43,6 +52,18 @@ function parseRoute(pathname: string): Route {
     return { name: 'submit' }
   }
 
+  if (pathname === '/my/requests') {
+    return { name: 'myRequests' }
+  }
+
+  if (pathname === '/admin/requests') {
+    return { name: 'adminRequests' }
+  }
+
+  if (pathname === '/admin/users') {
+    return { name: 'adminUsers' }
+  }
+
   if (pathname === '/predictions') {
     return { name: 'latestPrediction' }
   }
@@ -57,9 +78,11 @@ function App() {
 
   const route = useMemo(() => parseRoute(pathname), [pathname])
   const canSubmit = currentUser ? canCreateInferenceRequest(currentUser) : false
+  const isAdmin = currentUser?.roles.includes('admin') ?? false
   const visibleNavItems = canSubmit
     ? navItems
     : navItems.filter((item) => item.path !== '/submit')
+  const roleNavItems = visibleNavItems.filter((item) => !item.adminOnly || isAdmin)
 
   function navigate(path: string) {
     window.history.pushState(null, '', path)
@@ -131,7 +154,7 @@ function App() {
         </div>
 
         <nav className="main-nav">
-          {visibleNavItems.map((item) => (
+          {roleNavItems.map((item) => (
             <button
               className={
                 pathname === item.path ||
@@ -157,7 +180,7 @@ function App() {
           </div>
           <div className="topbar-actions">
             <div className="user-summary">
-              <strong>{currentUser.display_name}</strong>
+              <strong>{currentUser.username}</strong>
               <span>{currentUser.roles.join(', ')}</span>
             </div>
             {canSubmit ? (
@@ -175,17 +198,40 @@ function App() {
           </div>
         </header>
 
-        {route.name === 'dashboard' && <DashboardPage navigate={navigate} />}
+        {route.name === 'dashboard' && (
+          <DashboardPage isAdmin={isAdmin} navigate={navigate} />
+        )}
+        {route.name === 'adminRequests' &&
+          (isAdmin ? (
+            <AdminRequestsPage navigate={navigate} />
+          ) : (
+            <section className="state-box error-state">
+              You need the admin role to inspect all user requests.
+            </section>
+          ))}
+        {route.name === 'adminUsers' &&
+          (isAdmin ? (
+            <AdminUsersPage />
+          ) : (
+            <section className="state-box error-state">
+              You need the admin role to manage users.
+            </section>
+          ))}
+        {route.name === 'myRequests' && <MyRequestsPage navigate={navigate} />}
         {route.name === 'submit' &&
           (canSubmit ? (
             <SubmitProteinPage navigate={navigate} />
           ) : (
             <section className="state-box error-state">
-              You need the operator or admin role to submit inference requests.
+              You need the user or admin role to submit inference requests.
             </section>
           ))}
         {route.name === 'request' && (
-          <RequestStatusPage navigate={navigate} requestId={route.requestId} />
+          <RequestStatusPage
+            isAdmin={isAdmin}
+            navigate={navigate}
+            requestId={route.requestId}
+          />
         )}
         {route.name === 'latestPrediction' && (
           <LatestPredictionPage

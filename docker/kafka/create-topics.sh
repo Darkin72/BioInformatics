@@ -8,6 +8,7 @@ topics=(
   "raw_protein_input"
   "validated_protein_input"
   "inference_request"
+  "request_status"
   "prediction_result"
   "dead_letter"
 )

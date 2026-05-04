@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -15,8 +15,6 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-DEFAULT_USERNAME = os.getenv("STRESS_USERNAME", "operator")
-DEFAULT_PASSWORD = os.getenv("STRESS_PASSWORD", "operator123")
 SEQUENCE_EXTENSIONS = {".fa", ".faa", ".fasta", ".fna", ".txt"}
 
 
@@ -41,71 +39,77 @@ class SubmitResult:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Gửi đồng thời nhiều file sequence vào Serving API để stress test "
-            "luồng inference thật."
+            "Gá»­i Ä‘á»“ng thá»i nhiá»u file sequence vÃ o Serving API Ä‘á»ƒ stress test "
+            "luá»“ng inference tháº­t."
         ),
     )
     parser.add_argument(
         "--input-dir",
         type=Path,
         required=True,
-        help="Thư mục chứa file .fa, .fasta, .faa, .fna hoặc .txt.",
+        help="ThÆ° má»¥c chá»©a file .fa, .fasta, .faa, .fna hoáº·c .txt.",
     )
     parser.add_argument(
         "--api-base-url",
         default=DEFAULT_API_BASE_URL,
-        help=f"URL Serving API. Mặc định: {DEFAULT_API_BASE_URL}",
+        help=f"URL Serving API. Máº·c Ä‘á»‹nh: {DEFAULT_API_BASE_URL}",
     )
     parser.add_argument(
         "--username",
-        default=DEFAULT_USERNAME,
-        help=f"Tài khoản operator. Mặc định: {DEFAULT_USERNAME}",
+        default=None,
+        help="Operator username.",
     )
     parser.add_argument(
         "--password",
-        default=DEFAULT_PASSWORD,
-        help="Mật khẩu operator. Có thể cấu hình qua STRESS_PASSWORD.",
+        default=None,
+        help="Operator password.",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=4,
-        help="Số request gửi đồng thời.",
+        help="Sá»‘ request gá»­i Ä‘á»“ng thá»i.",
     )
     parser.add_argument(
         "--repeat",
         type=int,
         default=1,
-        help="Số lần lặp lại mỗi sequence.",
+        help="Sá»‘ láº§n láº·p láº¡i má»—i sequence.",
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Giới hạn số record đầu vào trước khi nhân repeat.",
+        help="Giá»›i háº¡n sá»‘ record Ä‘áº§u vÃ o trÆ°á»›c khi nhÃ¢n repeat.",
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=90.0,
-        help="Timeout mỗi HTTP request, tính bằng giây.",
+        help="Timeout má»—i HTTP request, tÃ­nh báº±ng giÃ¢y.",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("stress-results.jsonl"),
-        help="File JSONL ghi kết quả từng request.",
+        help="File JSONL ghi káº¿t quáº£ tá»«ng request.",
     )
     parser.add_argument(
         "--create-samples",
         type=int,
         default=0,
-        help="Tạo N file FASTA mẫu trong input-dir trước khi chạy.",
+        help="Táº¡o N file FASTA máº«u trong input-dir trÆ°á»›c khi cháº¡y.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Chỉ đọc file và in kế hoạch, không gọi API.",
+        help="Chá»‰ Ä‘á»c file vÃ  in káº¿ hoáº¡ch, khÃ´ng gá»i API.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Print progress after every N completed requests.",
     )
     return parser.parse_args()
 
@@ -238,7 +242,7 @@ def login(api_base_url: str, username: str, password: str, timeout: float) -> st
     )
     token = response.get("access_token")
     if not isinstance(token, str) or not token:
-        raise RuntimeError("API không trả về access_token hợp lệ.")
+        raise RuntimeError("API khÃ´ng tráº£ vá» access_token há»£p lá»‡.")
     return token
 
 
@@ -317,18 +321,18 @@ def print_summary(results: list[SubmitResult], elapsed_seconds: float) -> None:
     for result in results:
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
 
-    print("Kết quả stress test")
-    print(f"- Tổng request: {len(results)}")
-    print(f"- Thời gian: {elapsed_seconds:.2f}s")
+    print("Káº¿t quáº£ stress test")
+    print(f"- Tá»•ng request: {len(results)}")
+    print(f"- Thá»i gian: {elapsed_seconds:.2f}s")
     print(f"- Throughput: {len(results) / elapsed_seconds:.2f} request/s")
-    print(f"- Trạng thái: {json.dumps(status_counts, ensure_ascii=False)}")
-    print(f"- Latency trung bình: {statistics.mean(latencies):.2f} ms")
+    print(f"- Tráº¡ng thÃ¡i: {json.dumps(status_counts, ensure_ascii=False)}")
+    print(f"- Latency trung bÃ¬nh: {statistics.mean(latencies):.2f} ms")
     print(f"- Latency p50: {percentile(latencies, 0.50):.2f} ms")
     print(f"- Latency p95: {percentile(latencies, 0.95):.2f} ms")
 
     failed = [result for result in results if result.error]
     if failed:
-        print("- Lỗi đầu tiên:")
+        print("- Lá»—i Ä‘áº§u tiÃªn:")
         for result in failed[:5]:
             print(f"  {result.protein_id}: {result.error}")
 
@@ -341,10 +345,13 @@ def main() -> int:
 
     args = parse_args()
     if args.workers < 1:
-        print("--workers phải >= 1", file=sys.stderr)
+        print("--workers pháº£i >= 1", file=sys.stderr)
         return 2
     if args.repeat < 1:
-        print("--repeat phải >= 1", file=sys.stderr)
+        print("--repeat pháº£i >= 1", file=sys.stderr)
+        return 2
+    if not args.dry_run and (not args.username or not args.password):
+        print("--username and --password are required unless --dry-run is used.", file=sys.stderr)
         return 2
 
     if args.create_samples:
@@ -352,14 +359,16 @@ def main() -> int:
 
     records = load_records(args.input_dir, args.limit, args.repeat)
     if not records:
-        print("Không tìm thấy sequence hợp lệ để gửi.", file=sys.stderr)
+        print("KhÃ´ng tÃ¬m tháº¥y sequence há»£p lá»‡ Ä‘á»ƒ gá»­i.", file=sys.stderr)
         return 2
 
-    print(f"Đã đọc {len(records)} sequence từ {args.input_dir}.")
-    print(f"Số worker đồng thời: {args.workers}.")
+    print(f"ÄÃ£ Ä‘á»c {len(records)} sequence tá»« {args.input_dir}.")
+    print(f"Sá»‘ worker Ä‘á»“ng thá»i: {args.workers}.")
+
+    print(f"Total requests to send: {len(records)}.")
 
     if args.dry_run:
-        print("Dry run: không gọi API.")
+        print("Dry run: khÃ´ng gá»i API.")
         return 0
 
     token = login(args.api_base_url, args.username, args.password, args.timeout)
@@ -377,13 +386,24 @@ def main() -> int:
             )
             for record in records
         ]
-        for future in as_completed(futures):
-            results.append(future.result())
+        total = len(futures)
+        for completed, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            results.append(result)
+            if args.progress_every > 0 and (
+                completed == 1
+                or completed == total
+                or completed % args.progress_every == 0
+            ):
+                print(
+                    f"[{completed}/{total}] {result.protein_id}: "
+                    f"{result.status} ({result.latency_ms:.0f} ms)"
+                )
 
     elapsed_seconds = max(time.perf_counter() - started, 0.001)
     write_results(args.output, results)
     print_summary(results, elapsed_seconds)
-    print(f"Đã ghi chi tiết vào {args.output}.")
+    print(f"ÄÃ£ ghi chi tiáº¿t vÃ o {args.output}.")
     return 0
 
 

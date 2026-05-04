@@ -37,6 +37,7 @@ class Cafa6AnalysisResult:
     top_terms: list[Cafa6PredictionTerm]
     confidence_summary: str
     latency_ms: int
+    server_result: dict[str, Any]
 
 
 def run_cafa6_analysis(protein_id: str, sequence: str) -> Cafa6AnalysisResult:
@@ -95,6 +96,7 @@ def run_cafa6_analysis(protein_id: str, sequence: str) -> Cafa6AnalysisResult:
         top_terms=top_terms,
         confidence_summary=build_confidence_summary(protein_id, normalized_sequence, top_terms),
         latency_ms=latency_ms,
+        server_result=response_payload,
     )
 
 

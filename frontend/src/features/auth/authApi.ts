@@ -3,10 +3,21 @@ import type {
   AuthUser,
   LoginCredentials,
   LoginResponse,
+  RegisterCredentials,
 } from '../../shared/types'
 
 export async function login(credentials: LoginCredentials) {
   const response = await apiRequest<LoginResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  })
+
+  setAccessToken(response.access_token)
+  return response
+}
+
+export async function register(credentials: RegisterCredentials) {
+  const response = await apiRequest<LoginResponse>('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify(credentials),
   })
@@ -43,5 +54,5 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 }
 
 export function canCreateInferenceRequest(user: AuthUser) {
-  return user.roles.some((role) => role === 'operator' || role === 'admin')
+  return user.roles.some((role) => role === 'user' || role === 'admin')
 }

@@ -128,16 +128,11 @@ Biến môi trường chính:
 | `CAFA6_TOP_K` | `20` | Số GO term tối đa lấy từ endpoint |
 | `CAFA6_TIMEOUT_SECONDS` | `60` | Timeout khi gọi endpoint CAFA-6 |
 | `API_BASE_URL` | `http://localhost:8000` | URL Serving API dùng cho script stress test |
-| `STRESS_USERNAME` | `operator` | Tài khoản dùng cho script stress test |
-| `STRESS_PASSWORD` | `operator123` | Mật khẩu dùng cho script stress test |
 
-## Tài khoản demo
+## Tài khoản
 
-| Tên đăng nhập | Mật khẩu | Role | Quyền |
-| --- | --- | --- | --- |
-| `viewer` | `viewer123` | `viewer` | Xem dashboard, request status, prediction |
-| `operator` | `operator123` | `viewer`, `operator` | Quyền viewer và tạo inference request |
-| `admin` | `admin123` | `viewer`, `operator`, `admin` | Toàn quyền demo hiện có |
+- Account tạo mới qua giao diện đăng ký có role `user`.
+- Account admin được cấu hình qua `.env` bằng `ADMIN_USERNAME` và `ADMIN_PASSWORD`.
 
 ## API chính
 
@@ -147,15 +142,15 @@ Biến môi trường chính:
 | `POST` | `/api/auth/login` | Không | Đăng nhập và nhận bearer token |
 | `GET` | `/api/auth/me` | Bearer token | Lấy thông tin user hiện tại |
 | `POST` | `/api/auth/logout` | Bearer token | Revoke token trong phiên chạy API |
-| `GET` | `/api/metrics/pipeline/summary` | `viewer` trở lên | Dashboard summary |
-| `POST` | `/api/inference-requests` | `operator` hoặc `admin` | Tạo request inference mới |
-| `GET` | `/api/inference-requests/{request_id}` | `viewer` trở lên | Tra cứu trạng thái request |
-| `GET` | `/api/proteins/{protein_id}/latest-prediction` | `viewer` trở lên | Lấy prediction mới nhất theo protein |
+| `GET` | `/api/metrics/pipeline/summary` | `user` hoặc `admin` | Dashboard summary |
+| `POST` | `/api/inference-requests` | `user` hoặc `admin` | Tạo request inference mới |
+| `GET` | `/api/inference-requests/{request_id}` | `user` hoặc `admin` | Tra cứu trạng thái request |
+| `GET` | `/api/proteins/{protein_id}/requests` | `user` hoặc `admin` | Lấy toàn bộ request theo protein |
 
 Ví dụ đăng nhập:
 
 ```powershell
-$body = @{ username = "operator"; password = "operator123" } | ConvertTo-Json
+$body = @{ username = "admin"; password = "admin123" } | ConvertTo-Json
 $login = Invoke-RestMethod `
   -Method Post `
   -Uri http://localhost:8000/api/auth/login `
@@ -204,7 +199,9 @@ Tạo nhanh file mẫu và chạy bài stress nhỏ:
 python scripts\stress_submit_sequences.py `
   --input-dir .\tmp\stress_sequences `
   --create-samples 20 `
-  --workers 8
+  --workers 8 `
+  --username your_user `
+  --password your_password
 ```
 
 Xem thêm hướng dẫn ở [scripts/README.md](scripts/README.md).
@@ -241,7 +238,7 @@ PostgreSQL dùng cho dữ liệu quan hệ và metadata quản trị, không dù
 Compose chính nằm ở [docker-compose.yml](docker-compose.yml), dùng `.env` ở root và các file trong [docker/](docker/). Stack local/dev bao gồm:
 
 - `serving-api`: FastAPI demo trên port `8000`.
-- `frontend`: React/Vite build static serve qua Nginx trên port `5173`.
+- `frontend`: React/Vite dev server trên port `5173`, mount trực tiếp thư mục `frontend/` để HMR cập nhật khi sửa code.
 - `kafka`: Kafka KRaft local. Topic được bootstrap bằng job `kafka-init` khi cần.
 - `rabbitmq`: RabbitMQ + Management UI.
 - `postgres`: PostgreSQL local cho metadata, model registry, replay campaign và audit log.
@@ -322,3 +319,4 @@ Lưu ý: thư mục `tests` hiện chưa có test thực thi, mới là nơi chu
 ## Giấy phép
 
 Xem [LICENSE](LICENSE).
+

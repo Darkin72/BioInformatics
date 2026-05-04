@@ -5,7 +5,9 @@ description = "Minimal skeleton for a realtime protein function prediction platf
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cassandra-driver>=3.29.0",
     "fastapi>=0.115.0",
+    "kafka-python>=2.0.2",
     "uvicorn[standard]>=0.30.0",
 ]
 

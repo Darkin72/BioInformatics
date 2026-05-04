@@ -11,6 +11,8 @@ services:
       PORT: 8000
       JWT_SECRET: ${JWT_SECRET:-dev-local-change-before-shipping}
       JWT_EXPIRES_SECONDS: ${JWT_EXPIRES_SECONDS:-3600}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
@@ -22,8 +24,13 @@ services:
       CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
       CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
       CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-60}
+      USER_STORE_PATH: ${USER_STORE_PATH:-tmp/auth_users.json}
     ports:
       - "${API_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./apps:/app/apps
+      - ./docs:/app/docs:ro
+      - ./tmp:/app/tmp
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,20 +47,61 @@ services:
       retries: 12
     restart: unless-stopped
 
+  notification-service:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-notification-service
+    command:
+      - uvicorn
+      - apps.notification_service.src.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8003"
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_REQUEST_STATUS_TOPIC: ${KAFKA_REQUEST_STATUS_TOPIC:-request_status}
+      KAFKA_PREDICTION_TOPIC: ${KAFKA_PREDICTION_TOPIC:-prediction_result}
+      KAFKA_DEAD_LETTER_TOPIC: ${KAFKA_DEAD_LETTER_TOPIC:-dead_letter}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    ports:
+      - "${NOTIFICATION_HOST_PORT:-8003}:8003"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   frontend:
     build:
       context: .
       dockerfile: docker/frontend/Dockerfile
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     container_name: bioinformatics-frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      VITE_EVENTS_BASE_URL: ${VITE_EVENTS_BASE_URL:-http://localhost:8003}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-true}
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-true}
     ports:
-      - "${FRONTEND_HOST_PORT:-5173}:80"
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
     depends_on:
       serving-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -219,3 +267,4 @@ volumes:
   rabbitmq_data:
   postgres_data:
   cassandra_data:
+  frontend_node_modules:

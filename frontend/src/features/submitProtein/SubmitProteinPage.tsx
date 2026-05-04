@@ -17,8 +17,6 @@ interface SubmitProteinPageProps {
 export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
   const [proteinId, setProteinId] = useState('P12345')
   const [sequence, setSequence] = useState('MENDELACDEFGHIKLMNPQRSTVWY')
-  const [source, setSource] = useState('manual_ui')
-  const [metadata, setMetadata] = useState('{\n  "species": "optional"\n}')
   const [createdRequest, setCreatedRequest] =
     useState<InferenceRequest | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,24 +40,13 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
       return
     }
 
-    let parsedMetadata: Record<string, unknown> | undefined
-    if (metadata.trim()) {
-      try {
-        parsedMetadata = JSON.parse(metadata) as Record<string, unknown>
-      } catch {
-        setError('Metadata must be valid JSON.')
-        return
-      }
-    }
-
     setIsSubmitting(true)
 
     try {
       const created = await createInferenceRequest({
         protein_id: proteinId.trim(),
         sequence: normalizedSequence,
-        source,
-        metadata: parsedMetadata,
+        source: 'manual_ui',
       })
       setCreatedRequest(created)
     } catch (submitError) {
@@ -100,25 +87,6 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
             value={sequence}
           />
         </label>
-
-        <div className="form-row">
-          <label>
-            Source
-            <input
-              onChange={(event) => setSource(event.target.value)}
-              value={source}
-            />
-          </label>
-
-          <label>
-            Metadata JSON
-            <textarea
-              onChange={(event) => setMetadata(event.target.value)}
-              rows={5}
-              value={metadata}
-            />
-          </label>
-        </div>
 
         {error ? <ErrorState message={error} /> : null}
 

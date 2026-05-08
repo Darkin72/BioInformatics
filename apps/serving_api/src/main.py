@@ -208,6 +208,14 @@ class RequestHistoryClearResponse(BaseModel):
     updated_at: str
 
 
+class RequestDeleteResponse(BaseModel):
+    status: str
+    request_id: str
+    deleted_tables: list[str]
+    cleared_memory_items: int
+    updated_at: str
+
+
 security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
 REVOKED_TOKEN_IDS: set[str] = set()
@@ -449,6 +457,126 @@ class CassandraReader:
         for table in tables:
             self._session.execute(f"TRUNCATE {table}")
         return tables
+
+    def delete_request(
+        self,
+        request_id: str,
+        fallback_request_row: dict[str, Any] | None = None,
+    ) -> list[str]:
+        request_row = self.get_request(request_id) or fallback_request_row
+        if not request_row:
+            return []
+
+        deleted_tables: list[str] = []
+
+        self._session.execute(
+            "DELETE FROM request_status_by_id WHERE request_id = %s",
+            (request_id,),
+        )
+        deleted_tables.append("request_status_by_id")
+
+        request_date = request_row.get("request_date")
+        created_at = request_row.get("created_at")
+        updated_at = request_row.get("updated_at") or created_at
+        current_status = request_row.get("current_status")
+        username = request_row.get("username")
+        protein_id = request_row.get("protein_id")
+
+        if request_date is not None and not isinstance(request_date, date):
+            request_date = date.fromisoformat(str(request_date))
+        if isinstance(created_at, str):
+            created_at = parse_iso_datetime(created_at)
+        if isinstance(updated_at, str):
+            updated_at = parse_iso_datetime(updated_at)
+
+        if request_date is None and created_at is not None:
+            request_date = (
+                created_at.date()
+                if isinstance(created_at, datetime)
+                else parse_iso_datetime(str(created_at)).date()
+            )
+
+        if request_date is not None and created_at is not None:
+            self._session.execute(
+                """
+                DELETE FROM requests_by_day
+                WHERE request_date = %s AND created_at = %s AND request_id = %s
+                """,
+                (request_date, created_at, request_id),
+            )
+            deleted_tables.append("requests_by_day")
+
+        if request_date is not None and updated_at is not None and current_status:
+            status_bucket = f"{request_date.isoformat()}#{str(current_status).lower()}"
+            self._session.execute(
+                """
+                DELETE FROM requests_by_status_window
+                WHERE status_bucket = %s AND updated_at = %s AND request_id = %s
+                """,
+                (status_bucket, updated_at, request_id),
+            )
+            deleted_tables.append("requests_by_status_window")
+
+        if request_date is not None and username and created_at is not None:
+            username_bucket = f"{request_date.isoformat()}#{username}"
+            self._session.execute(
+                """
+                DELETE FROM requests_by_user_window
+                WHERE username_bucket = %s AND created_at = %s AND request_id = %s
+                """,
+                (username_bucket, created_at, request_id),
+            )
+            deleted_tables.append("requests_by_user_window")
+
+        if protein_id and created_at is not None:
+            self._session.execute(
+                """
+                DELETE FROM requests_by_protein_window
+                WHERE protein_bucket = %s AND created_at = %s AND request_id = %s
+                """,
+                (str(protein_id).lower(), created_at, request_id),
+            )
+            deleted_tables.append("requests_by_protein_window")
+
+        self._session.execute(
+            "DELETE FROM request_timeline_by_id WHERE request_id = %s",
+            (request_id,),
+        )
+        deleted_tables.append("request_timeline_by_id")
+
+        if protein_id:
+            for row in self.prediction_history_by_protein(str(protein_id), limit=200):
+                if str(row.get("request_id")) != request_id:
+                    continue
+                predicted_at = row.get("predicted_at")
+                if predicted_at is None:
+                    continue
+                if isinstance(predicted_at, str):
+                    predicted_at = parse_iso_datetime(predicted_at)
+                self._session.execute(
+                    """
+                    DELETE FROM prediction_history_by_protein
+                    WHERE protein_id = %s AND predicted_at = %s AND request_id = %s
+                    """,
+                    (str(protein_id), predicted_at, request_id),
+                )
+                if "prediction_history_by_protein" not in deleted_tables:
+                    deleted_tables.append("prediction_history_by_protein")
+
+            latest_rows = self._session.execute(
+                "SELECT request_id FROM latest_prediction_by_protein WHERE protein_id = %s LIMIT 1",
+                (str(protein_id),),
+            )
+            for latest_row in latest_rows:
+                if str(getattr(latest_row, "request_id", "")) == request_id:
+                    self._session.execute(
+                        "DELETE FROM latest_prediction_by_protein WHERE protein_id = %s",
+                        (str(protein_id),),
+                    )
+                    deleted_tables.append("latest_prediction_by_protein")
+                break
+
+        return deleted_tables
 
     def request_timeline(self, request_id: str, limit: int = 100) -> list[dict[str, Any]]:
         rows = self._session.execute(
@@ -734,6 +862,30 @@ def prediction_for_request(request_id: str) -> LatestPrediction | None:
         ),
         None,
     )
+
+
+def delete_request_from_memory(request_id: str) -> int:
+    cleared_items = 0
+
+    original_request_count = len(REQUESTS)
+    REQUESTS[:] = [request for request in REQUESTS if request.request_id != request_id]
+    cleared_items += original_request_count - len(REQUESTS)
+
+    original_prediction_count = len(PREDICTIONS)
+    PREDICTIONS[:] = [
+        prediction for prediction in PREDICTIONS if prediction.request_id != request_id
+    ]
+    cleared_items += original_prediction_count - len(PREDICTIONS)
+
+    if request_id in REQUEST_INPUTS:
+        del REQUEST_INPUTS[request_id]
+        cleared_items += 1
+
+    if request_id in REQUEST_LATENCIES_MS:
+        del REQUEST_LATENCIES_MS[request_id]
+        cleared_items += 1
+
+    return cleared_items
 
 
 def input_from_event_payload(payload: dict[str, Any]) -> RequestInput | None:
@@ -1627,6 +1779,7 @@ def list_admin_requests(
     status_filter: str | None = Query(default=None, alias="status"),
     username: str | None = Query(default=None),
     request_date: date | None = Query(default=None),
+    days: int = Query(default=30, ge=1, le=365),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=5, le=100),
     _: UserPublic = Depends(require_roles("admin")),
@@ -1652,31 +1805,45 @@ def list_admin_requests(
             detail="username is required when table=requests_by_user_window",
         )
 
-    query_date = request_date or app_now().date()
     fetch_limit = page * page_size + 1
     start_index = (page - 1) * page_size
     end_index = start_index + page_size
     reader = get_cassandra_reader()
     if reader:
         try:
-            rows = reader.list_requests(
-                request_date=query_date,
-                limit=fetch_limit,
-                table=table,
-                status_filter=status_filter,
-                username=username,
+            rows: list[dict[str, Any]] = []
+            query_dates = (
+                [request_date]
+                if request_date
+                else [app_now().date() - timedelta(days=offset) for offset in range(days)]
             )
-            paged_rows = rows[start_index:end_index]
-            items = [inference_request_from_row(row) for row in paged_rows]
+            for query_date in query_dates:
+                rows.extend(
+                    reader.list_requests(
+                        request_date=query_date,
+                        limit=fetch_limit,
+                        table=table,
+                        status_filter=status_filter,
+                        username=username,
+                    )
+                )
+                if len(rows) >= fetch_limit:
+                    break
+            requests = [inference_request_from_row(row) for row in rows]
+            requests.sort(
+                key=lambda item: item.updated_at or item.created_at,
+                reverse=True,
+            )
+            paged_requests = requests[start_index:end_index]
             return AdminRequestList(
-                items=items,
+                items=paged_requests,
                 source="cassandra",
                 limit=page_size,
                 table=table,
                 page=page,
                 page_size=page_size,
-                returned=len(items),
-                has_next=len(rows) > end_index,
+                returned=len(paged_requests),
+                has_next=len(requests) > end_index,
                 updated_at=app_now().isoformat(),
             )
         except Exception:
@@ -1687,7 +1854,12 @@ def list_admin_requests(
         for request in REQUESTS
         if (not status_filter or request.current_status == status_filter.lower())
         and (not request_date or parse_iso_datetime(request.created_at).date() == request_date)
+        and (not username or request.username == username)
     ]
+    filtered_items.sort(
+        key=lambda item: item.updated_at or item.created_at,
+        reverse=True,
+    )
     items = filtered_items[start_index:end_index]
     return AdminRequestList(
         items=items,
@@ -1725,6 +1897,57 @@ def clear_admin_request_history(
     return RequestHistoryClearResponse(
         status="ok",
         truncated_tables=truncated_tables,
+        cleared_memory_items=cleared_memory_items,
+        updated_at=app_now().isoformat(),
+    )
+
+
+@app.delete("/api/admin/requests/{request_id}", response_model=RequestDeleteResponse)
+def delete_admin_request(
+    request_id: str,
+    protein_id: str | None = Query(default=None),
+    username: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    created_at: str | None = Query(default=None),
+    updated_at: str | None = Query(default=None),
+    current_status: str | None = Query(default=None),
+    stage_name: str | None = Query(default=None),
+    model_version: str | None = Query(default=None),
+    feature_version: str | None = Query(default=None),
+    _: UserPublic = Depends(require_roles("admin")),
+) -> RequestDeleteResponse:
+    cleared_memory_items = delete_request_from_memory(request_id)
+
+    deleted_tables: list[str] = []
+    reader = get_cassandra_reader()
+    if reader:
+        fallback_row = {
+            "request_id": request_id,
+            "protein_id": protein_id,
+            "username": username,
+            "source": source,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "current_status": current_status,
+            "stage_name": stage_name,
+            "model_version": model_version,
+            "feature_version": feature_version,
+        }
+        fallback_row = {
+            key: value for key, value in fallback_row.items() if value is not None
+        }
+        deleted_tables = reader.delete_request(request_id, fallback_row or None)
+
+    if not deleted_tables and cleared_memory_items == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found",
+        )
+
+    return RequestDeleteResponse(
+        status="ok",
+        request_id=request_id,
+        deleted_tables=deleted_tables,
         cleared_memory_items=cleared_memory_items,
         updated_at=app_now().isoformat(),
     )

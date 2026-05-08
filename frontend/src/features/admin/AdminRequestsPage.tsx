@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
 import { StatusBadge } from '../../components/StatusBadge'
-import { formatDateTime, todayIsoDate } from '../../shared/date'
+import { formatDateTime } from '../../shared/date'
 import type {
   AdminRequestList,
+  InferenceRequest,
   RequestStatus,
   RequestTimelineEvent,
 } from '../../shared/types'
 import { openDashboardEvents } from '../dashboard/dashboardApi'
-import { getAdminRequests, getRequestTimeline } from './adminApi'
+import { deleteAdminRequest, getAdminRequests, getRequestTimeline } from './adminApi'
 
 interface AdminRequestsPageProps {
   navigate: (path: string) => void
@@ -43,16 +44,16 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
   const [table, setTable] = useState('requests_by_day')
   const [status, setStatus] = useState('')
   const [username, setUsername] = useState('')
-  const [requestDate, setRequestDate] = useState(todayIsoDate())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [remote, setRemote] = useState<AdminRequestList | null>(null)
   const [timeline, setTimeline] = useState<RequestTimelineEvent[]>([])
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [deletingRequestId, setDeletingRequestId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function loadRequests(showLoading = false) {
+  const loadRequests = useCallback(async (showLoading = false) => {
     if (showLoading) {
       setIsLoading(true)
     }
@@ -62,7 +63,6 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
           table,
           status,
           username: username.trim() || undefined,
-          requestDate,
           page,
           pageSize,
         }),
@@ -79,7 +79,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
         setIsLoading(false)
       }
     }
-  }
+  }, [table, status, username, page, pageSize])
 
   async function openTimeline(requestId: string) {
     setSelectedRequestId(requestId)
@@ -91,16 +91,46 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
     }
   }
 
+  async function deleteRequest(request: InferenceRequest) {
+    const confirmed = window.confirm(
+      `Delete request ${request.request_id} from Cassandra and in-memory history?`,
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setDeletingRequestId(request.request_id)
+    try {
+      await deleteAdminRequest(request)
+      if (selectedRequestId === request.request_id) {
+        setSelectedRequestId(null)
+        setTimeline([])
+      }
+      await loadRequests(false)
+      setError(null)
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Unable to delete request.',
+      )
+    } finally {
+      setDeletingRequestId(null)
+    }
+  }
+
   useEffect(() => {
-    void loadRequests(true)
-  }, [table, status, username, requestDate, page, pageSize])
+    queueMicrotask(() => {
+      void loadRequests(true)
+    })
+  }, [loadRequests])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void loadRequests(false)
     }, 5000)
     return () => window.clearInterval(intervalId)
-  }, [table, status, username, requestDate, page, pageSize])
+  }, [loadRequests])
 
   useEffect(() => {
     const close = openDashboardEvents(
@@ -111,7 +141,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
       () => undefined,
     )
     return close
-  }, [table, status, username, requestDate, page, pageSize])
+  }, [loadRequests])
 
   function updateTable(nextTable: string) {
     setTable(nextTable)
@@ -181,17 +211,6 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
           />
         </label>
         <label>
-          Request date
-          <input
-            type="date"
-            value={requestDate}
-            onChange={(event) => {
-              setRequestDate(event.target.value)
-              setPage(1)
-            }}
-          />
-        </label>
-        <label>
           Page size
           <select
             value={pageSize}
@@ -229,6 +248,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
                   <th>Stage</th>
                   <th>Created</th>
                   <th>Model</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -250,6 +270,16 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
                     <td>{request.stage_name ?? '-'}</td>
                     <td>{formatDateTime(request.created_at)}</td>
                     <td>{request.model_version ?? '-'}</td>
+                    <td>
+                      <button
+                        className="danger-link"
+                        disabled={deletingRequestId === request.request_id}
+                        onClick={() => void deleteRequest(request)}
+                        type="button"
+                      >
+                        {deletingRequestId === request.request_id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

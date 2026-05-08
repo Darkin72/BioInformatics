@@ -2,6 +2,7 @@ import { API_BASE_URL, apiRequest, getAccessToken } from '../../shared/apiClient
 import type {
   AdminRequestList,
   AdminUserList,
+  InferenceRequest,
   RequestTimelineEvent,
 } from '../../shared/types'
 
@@ -9,7 +10,6 @@ export function getAdminRequests(params: {
   table?: string
   status?: string
   username?: string
-  requestDate?: string
   page?: number
   pageSize?: number
 }) {
@@ -22,9 +22,6 @@ export function getAdminRequests(params: {
   }
   if (params.username) {
     search.set('username', params.username)
-  }
-  if (params.requestDate) {
-    search.set('request_date', params.requestDate)
   }
   search.set('page', String(params.page ?? 1))
   search.set('page_size', String(params.pageSize ?? 25))
@@ -40,6 +37,44 @@ export function clearRequestHistory() {
   }>('/api/admin/request-history', {
     method: 'DELETE',
   })
+}
+
+export function deleteAdminRequest(request: InferenceRequest) {
+  const search = new URLSearchParams()
+  search.set('protein_id', request.protein_id)
+  search.set('created_at', request.created_at)
+  search.set('current_status', request.current_status)
+  if (request.username) {
+    search.set('username', request.username)
+  }
+  if (request.source) {
+    search.set('source', request.source)
+  }
+  if (request.updated_at) {
+    search.set('updated_at', request.updated_at)
+  }
+  if (request.stage_name) {
+    search.set('stage_name', request.stage_name)
+  }
+  if (request.model_version) {
+    search.set('model_version', request.model_version)
+  }
+  if (request.feature_version) {
+    search.set('feature_version', request.feature_version)
+  }
+
+  return apiRequest<{
+    status: string
+    request_id: string
+    deleted_tables: string[]
+    cleared_memory_items: number
+    updated_at: string
+  }>(
+    `/api/admin/requests/${encodeURIComponent(request.request_id)}?${search}`,
+    {
+      method: 'DELETE',
+    },
+  )
 }
 
 export function getRequestTimeline(requestId: string) {

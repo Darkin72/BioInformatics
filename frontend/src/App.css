@@ -311,13 +311,27 @@
 }
 
 .table-link,
-.link-button {
+.link-button,
+.danger-link {
   background: transparent;
   border: 0;
-  color: var(--primary-strong);
   font-weight: 700;
   padding: 0;
   text-align: left;
+}
+
+.table-link,
+.link-button {
+  color: var(--primary-strong);
+}
+
+.danger-link {
+  color: var(--red);
+}
+
+.danger-link:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 .primary-button,
@@ -518,7 +532,7 @@ dd {
   box-shadow: var(--shadow);
   display: grid;
   gap: 1rem;
-  grid-template-columns: 160px 160px minmax(220px, 1fr) 180px 120px;
+  grid-template-columns: 160px 160px minmax(220px, 1fr) 120px;
   padding: 1rem;
 }
 

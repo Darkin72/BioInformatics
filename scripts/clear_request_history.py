@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 DEFAULT_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 DEFAULT_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
@@ -90,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

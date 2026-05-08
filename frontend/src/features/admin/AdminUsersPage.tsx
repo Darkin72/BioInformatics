@@ -48,7 +48,9 @@ export function AdminUsersPage() {
   }
 
   useEffect(() => {
-    void loadUsers(true)
+    queueMicrotask(() => {
+      void loadUsers(true)
+    })
   }, [])
 
   useEffect(() => {

@@ -224,7 +224,7 @@ allowed_origins = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
+        "http://localhost:5174,http://127.0.0.1:5174",
     ).split(",")
     if origin.strip()
 ]
@@ -625,7 +625,7 @@ def get_kafka_producer() -> Any | None:
         from kafka import KafkaProducer
 
         KAFKA_PRODUCER = KafkaProducer(
-            bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+            bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9093"),
             value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
             key_serializer=lambda key: key.encode("utf-8"),
             linger_ms=10,

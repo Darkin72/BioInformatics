@@ -455,7 +455,7 @@ allowed_origins = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
+        "http://localhost:5174,http://127.0.0.1:5174",
     ).split(",")
     if origin.strip()
 ]
@@ -524,7 +524,7 @@ def consume_kafka(stop_event: threading.Event) -> None:
         try:
             consumer = KafkaConsumer(
                 *topics,
-                bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+                bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9093"),
                 group_id=os.getenv("NOTIFICATION_CONSUMER_GROUP", "protein-notification-service"),
                 auto_offset_reset="latest",
                 enable_auto_commit=True,

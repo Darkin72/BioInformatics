@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 SEQUENCE_EXTENSIONS = {".fa", ".faa", ".fasta", ".fna", ".txt"}
 
 

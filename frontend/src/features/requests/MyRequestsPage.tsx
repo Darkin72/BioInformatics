@@ -21,29 +21,34 @@ export function MyRequestsPage({ navigate }: MyRequestsPageProps) {
 
   useEffect(() => {
     let isActive = true
-    setIsLoading(true)
 
-    getMyRequests({ days, page, pageSize })
-      .then((data) => {
-        if (isActive) {
-          setRemote(data)
-          setError(null)
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (isActive) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Unable to load your requests.',
-          )
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsLoading(false)
-        }
-      })
+    queueMicrotask(() => {
+      if (isActive) {
+        setIsLoading(true)
+      }
+
+      getMyRequests({ days, page, pageSize })
+        .then((data) => {
+          if (isActive) {
+            setRemote(data)
+            setError(null)
+          }
+        })
+        .catch((loadError: unknown) => {
+          if (isActive) {
+            setError(
+              loadError instanceof Error
+                ? loadError.message
+                : 'Unable to load your requests.',
+            )
+          }
+        })
+        .finally(() => {
+          if (isActive) {
+            setIsLoading(false)
+          }
+        })
+    })
 
     return () => {
       isActive = false

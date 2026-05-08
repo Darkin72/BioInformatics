@@ -14,11 +14,11 @@ npm run dev
 Frontend gọi Serving API thật qua `VITE_API_BASE_URL`. Khi chạy local, cấu hình:
 
 ```powershell
-$env:VITE_API_BASE_URL = "http://localhost:8000"
+$env:VITE_API_BASE_URL = "http://localhost:8001"
 npm run dev
 ```
 
-Nếu không cấu hình `VITE_API_BASE_URL`, frontend mặc định gọi `http://localhost:8000`.
+Nếu không cấu hình `VITE_API_BASE_URL`, frontend mặc định gọi `http://localhost:8001`.
 
 ## Build và lint
 
@@ -29,7 +29,7 @@ npm run build
 
 ## Cấu hình chính
 
-- `VITE_API_BASE_URL`: URL Serving API. Khi không có biến này, frontend mặc định gọi `http://localhost:8000`.
+- `VITE_API_BASE_URL`: URL Serving API. Khi không có biến này, frontend mặc định gọi `http://localhost:8001`.
 - Token đăng nhập được lưu trong `localStorage` với key `protein-function.access-token`.
 
 ## Màn hình hiện có

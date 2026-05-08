@@ -39,7 +39,7 @@ python scripts\stress_submit_sequences.py `
 
 Biáº¿n mÃ´i trÆ°á»ng há»— trá»£:
 
-- `API_BASE_URL`: URL Serving API, máº·c Ä‘á»‹nh `http://localhost:8000`.
+- `API_BASE_URL`: URL Serving API, máº·c Ä‘á»‹nh `http://localhost:8001`.
 
 LÆ°u Ã½: script gá»i endpoint CAFA-6 tháº­t thÃ´ng qua Serving API, nÃªn khi tÄƒng `--workers`, `--repeat` hoáº·c sá»‘ file Ä‘áº§u vÃ o thÃ¬ táº£i vÃ  chi phÃ­ phÃ­a endpoint tháº­t cÅ©ng tÄƒng theo.
 Note: `--workers` controls concurrency only; `--limit` controls total input records.

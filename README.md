@@ -109,7 +109,7 @@ uvicorn apps.serving_api.src.main:app --reload --host 0.0.0.0 --port 8000
 Kiểm tra health:
 
 ```powershell
-Invoke-RestMethod http://localhost:8000/health
+Invoke-RestMethod http://localhost:8001/health
 ```
 
 Biến môi trường chính:
@@ -118,7 +118,7 @@ Biến môi trường chính:
 | --- | --- | --- |
 | `JWT_SECRET` | `dev-only-change-me` | Khóa ký JWT, cần đổi khi chạy môi trường thật |
 | `JWT_EXPIRES_SECONDS` | `3600` | Thời gian sống của access token |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Origin frontend được phép gọi API |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5174,http://127.0.0.1:5174` | Origin frontend được phép gọi API |
 | `HOST` | `0.0.0.0` | Host khi chạy qua `python apps/serving_api/src/main.py` |
 | `PORT` | `8000` | Port khi chạy qua entrypoint Python |
 | `RELOAD` | `false` | Bật/tắt reload khi chạy qua entrypoint Python |
@@ -127,7 +127,7 @@ Biến môi trường chính:
 | `CAFA6_HEALTH_URL` | rỗng | URL endpoint `cafa6-health` để kiểm tra Modal service |
 | `CAFA6_TOP_K` | `20` | Số GO term tối đa lấy từ endpoint |
 | `CAFA6_TIMEOUT_SECONDS` | `60` | Timeout khi gọi endpoint CAFA-6 |
-| `API_BASE_URL` | `http://localhost:8000` | URL Serving API dùng cho script stress test |
+| `API_BASE_URL` | `http://localhost:8001` | URL Serving API dùng cho script stress test |
 
 ## Tài khoản
 
@@ -153,14 +153,14 @@ Ví dụ đăng nhập:
 $body = @{ username = "admin"; password = "admin123" } | ConvertTo-Json
 $login = Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:8000/api/auth/login `
+  -Uri http://localhost:8001/api/auth/login `
   -ContentType "application/json" `
   -Body $body
 
 $token = $login.access_token
 Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" } `
-  http://localhost:8000/api/metrics/pipeline/summary
+  http://localhost:8001/api/metrics/pipeline/summary
 ```
 
 ## Chạy Frontend
@@ -175,11 +175,11 @@ npm run dev
 Frontend gọi Serving API thật qua `VITE_API_BASE_URL`. Khi chạy local, cấu hình:
 
 ```powershell
-$env:VITE_API_BASE_URL = "http://localhost:8000"
+$env:VITE_API_BASE_URL = "http://localhost:8001"
 npm run dev
 ```
 
-Nếu không cấu hình `VITE_API_BASE_URL`, frontend mặc định gọi `http://localhost:8000`.
+Nếu không cấu hình `VITE_API_BASE_URL`, frontend mặc định gọi `http://localhost:8001`.
 
 Các màn hình hiện có:
 
@@ -250,7 +250,7 @@ Chạy các service chính từ root repo:
 ```powershell
 docker compose up -d --build
 docker compose ps
-Invoke-RestMethod http://localhost:8000/health
+Invoke-RestMethod http://localhost:8001/health
 ```
 
 Bootstrap topic Kafka và schema Cassandra khi tạo volume mới hoặc sau `docker compose down -v`:
@@ -266,14 +266,17 @@ Các URL chính:
 
 | Service | URL |
 | --- | --- |
-| Frontend | `http://localhost:5173` |
-| Serving API | `http://localhost:8000` |
-| RabbitMQ Management | `http://localhost:15672` |
-| PostgreSQL | `localhost:5432` |
-| Spark Master UI | `http://localhost:8080` |
-| Spark Worker UI | `http://localhost:8081` |
-| Kafka bootstrap từ host | `localhost:9092` |
-| Cassandra CQL từ host | `localhost:9042` |
+| Frontend | `http://localhost:5174` |
+| Serving API | `http://localhost:8001` |
+| Notification Service | `http://localhost:8004` |
+| RabbitMQ Management | `http://localhost:15673` |
+| RabbitMQ AMQP | `localhost:5673` |
+| PostgreSQL | `localhost:5433` |
+| Spark Master UI | `http://localhost:8081` |
+| Spark Master | `localhost:7078` |
+| Spark Worker UI | `http://localhost:8082` |
+| Kafka bootstrap từ host | `localhost:9093` |
+| Cassandra CQL từ host | `localhost:9043` |
 
 Dừng stack:
 

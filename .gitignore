@@ -194,6 +194,7 @@ cython_debug/
 .ruff_cache/
 
 # Local model artifacts
+cafa6_graph_aware_artifacts/
 cafa6_high_performance_artifacts/
 cafa6_new_sequence_predictions/
 cafa6_modal/.env

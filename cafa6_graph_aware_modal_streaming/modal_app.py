@@ -7,10 +7,10 @@ from typing import Any
 import modal
 
 
-APP_NAME = "cafa6-ensemble-streaming-endpoint"
+APP_NAME = "cafa6-graph-aware-streaming-endpoint"
 ARTIFACT_VOLUME_NAME = "cafa6-artifacts"
 HF_CACHE_VOLUME_NAME = "cafa6-hf-cache"
-ARTIFACT_DIR = "/models/cafa6_high_performance_artifacts"
+ARTIFACT_DIR = "/models/cafa6_graph_aware_artifacts"
 MAX_RECORDS_PER_REQUEST = 64
 DEFAULT_STREAM_BATCH_SIZE = 8
 MAX_STREAM_BATCH_SIZE = 32
@@ -38,7 +38,7 @@ image = (
             "TOKENIZERS_PARALLELISM": "false",
         }
     )
-    .add_local_python_source("cafa6_modal_streaming")
+    .add_local_python_source("cafa6_graph_aware_modal_streaming")
 )
 
 
@@ -54,6 +54,17 @@ def parse_records(payload: dict):
     return records
 
 
+def coerce_request(payload: dict):
+    records = parse_records(payload)
+    model_name = str(payload.get("model", "ensemble")).strip().lower()
+    top_k = int(payload.get("top_k", 100))
+    threshold = payload.get("threshold")
+    include_branch_predictions = bool(payload.get("include_branch_predictions", False))
+    stream_batch_size = int(payload.get("stream_batch_size", DEFAULT_STREAM_BATCH_SIZE))
+    stream_batch_size = max(1, min(stream_batch_size, MAX_STREAM_BATCH_SIZE))
+    return model_name, records, top_k, threshold, include_branch_predictions, stream_batch_size
+
+
 @app.cls(
     image=image,
     gpu="T4",
@@ -64,49 +75,22 @@ def parse_records(payload: dict):
     buffer_containers=1,
     scaledown_window=180,
 )
-class CAFA6StreamingService:
+class CAFA6GraphAwareStreamingService:
     @modal.enter()
     def load(self):
-        from cafa6_modal_streaming.predictor import CAFA6StreamingPredictor
+        from cafa6_graph_aware_modal_streaming.predictor import (
+            CAFA6GraphAwareStreamingPredictor,
+        )
 
-        self.predictor = CAFA6StreamingPredictor(artifact_dir=ARTIFACT_DIR)
+        self.predictor = CAFA6GraphAwareStreamingPredictor(artifact_dir=ARTIFACT_DIR)
 
-    @modal.fastapi_endpoint(method="GET", label="cafa6-stream-health")
-    def health(self):
-        return self.predictor.health()
-
-    @modal.fastapi_endpoint(method="POST", label="cafa6-stream-predict", docs=True)
-    def predict(self, payload: dict):
-        from fastapi import HTTPException
-
-        records = parse_records(payload)
-        if not isinstance(records, list):
-            raise HTTPException(
-                status_code=400,
-                detail="Request must include records: [{id, sequence}, ...].",
-            )
-        if len(records) > MAX_RECORDS_PER_REQUEST:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Too many records. Max records per request is {MAX_RECORDS_PER_REQUEST}.",
-            )
-
-        try:
-            return self.predictor.predict(
-                records=records,
-                top_k=int(payload.get("top_k", 100)),
-                threshold=payload.get("threshold"),
-                include_branch_predictions=bool(payload.get("include_branch_predictions", False)),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @modal.fastapi_endpoint(method="POST", label="cafa6-stream-predict-sse", docs=True)
-    def predict_sse(self, payload: dict):
+    def _predict_sse(self, payload: dict):
         from fastapi import HTTPException
         from fastapi.responses import StreamingResponse
 
-        records = parse_records(payload)
+        model_name, records, top_k, threshold, include_branch_predictions, stream_batch_size = coerce_request(
+            payload
+        )
         if not isinstance(records, list):
             raise HTTPException(
                 status_code=400,
@@ -117,12 +101,6 @@ class CAFA6StreamingService:
                 status_code=413,
                 detail=f"Too many records. Max records per request is {MAX_RECORDS_PER_REQUEST}.",
             )
-
-        top_k = int(payload.get("top_k", 100))
-        threshold = payload.get("threshold")
-        include_branch_predictions = bool(payload.get("include_branch_predictions", False))
-        stream_batch_size = int(payload.get("stream_batch_size", DEFAULT_STREAM_BATCH_SIZE))
-        stream_batch_size = max(1, min(stream_batch_size, MAX_STREAM_BATCH_SIZE))
 
         def event_generator():
             started_at = time.time()
@@ -130,6 +108,7 @@ class CAFA6StreamingService:
                 "start",
                 {
                     "status": "started",
+                    "model": model_name,
                     "total_input_records": len(records),
                     "stream_batch_size": stream_batch_size,
                     "top_k": top_k,
@@ -138,18 +117,20 @@ class CAFA6StreamingService:
                 },
             )
             try:
-                for batch in self.predictor.iter_predict_batches(
+                for event_name, event_payload in self.predictor.iter_predict_events(
                     records=records,
+                    model_name=model_name,
                     top_k=top_k,
                     threshold=threshold,
                     include_branch_predictions=include_branch_predictions,
                     stream_batch_size=stream_batch_size,
                 ):
-                    yield sse("batch", batch)
+                    yield sse(event_name, event_payload)
                 yield sse(
                     "done",
                     {
                         "status": "done",
+                        "model": model_name,
                         "elapsed_seconds": round(time.time() - started_at, 3),
                     },
                 )
@@ -158,6 +139,7 @@ class CAFA6StreamingService:
                     "error",
                     {
                         "status": "error",
+                        "model": model_name,
                         "error_type": "ValueError",
                         "message": str(exc),
                     },
@@ -167,6 +149,7 @@ class CAFA6StreamingService:
                     "error",
                     {
                         "status": "error",
+                        "model": model_name,
                         "error_type": exc.__class__.__name__,
                         "message": str(exc),
                     },
@@ -181,3 +164,7 @@ class CAFA6StreamingService:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @modal.fastapi_endpoint(method="POST", label="cafa6-graph-aware-predict-sse", docs=True)
+    def predict_sse(self, payload: dict):
+        return self._predict_sse(payload)

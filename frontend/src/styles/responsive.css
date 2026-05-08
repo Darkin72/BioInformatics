@@ -188,7 +188,14 @@
   .dashboard-page .bar-fill,
   .dashboard-page .status-donut,
   .dashboard-system-strip > div,
-  .dashboard-system-strip > div::after {
+  .dashboard-system-strip > div::after,
+  .app-shell .page-stack:not(.dashboard-page) > .panel,
+  .app-shell .page-stack:not(.dashboard-page) > .form-panel,
+  .app-shell .page-stack:not(.dashboard-page) > .search-panel,
+  .app-shell .page-stack:not(.dashboard-page) > .state-box,
+  .app-shell .page-stack:not(.dashboard-page) > .filter-panel,
+  .app-shell .page-stack:not(.dashboard-page) > .admin-grid > .panel,
+  .request-stream-event {
     animation: none;
   }
 
@@ -197,7 +204,13 @@
   .auth-panel .primary-button,
   .auth-pipeline svg,
   .dashboard-page .metric-card,
-  .dashboard-page .panel {
+  .dashboard-page .panel,
+  .app-shell .page-stack:not(.dashboard-page) .panel,
+  .app-shell .page-stack:not(.dashboard-page) .form-panel,
+  .app-shell .page-stack:not(.dashboard-page) .search-panel,
+  .table-wrap tbody tr,
+  .label-result-card,
+  .timeline-item {
     transition: none;
   }
 }

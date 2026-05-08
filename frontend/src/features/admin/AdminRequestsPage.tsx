@@ -326,7 +326,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
             <div className="timeline">
               {timeline.map((event) => (
                 <div className="timeline-item" key={`${event.event_ts}-${event.event_type}`}>
-                  <strong>{event.event_type}</strong>
+                  <strong>{event.event_type || 'Timeline event'}</strong>
                   <span>{formatDateTime(event.event_ts)}</span>
                   <p>{event.stage_name ?? event.status ?? '-'}</p>
                   {event.message ? <small>{event.message}</small> : null}

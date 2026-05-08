@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { ErrorState } from '../../components/ErrorState'
-import { StatusBadge } from '../../components/StatusBadge'
-import { formatDateTime } from '../../shared/date'
-import type { InferenceRequest } from '../../shared/types'
 import {
   normalizeProteinSequence,
   validateProteinSequence,
@@ -17,15 +14,12 @@ interface SubmitProteinPageProps {
 export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
   const [proteinId, setProteinId] = useState('P12345')
   const [sequence, setSequence] = useState('MENDELACDEFGHIKLMNPQRSTVWY')
-  const [createdRequest, setCreatedRequest] =
-    useState<InferenceRequest | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
-    setCreatedRequest(null)
 
     const normalizedSequence = normalizeProteinSequence(sequence)
     const sequenceError = validateProteinSequence(normalizedSequence)
@@ -48,7 +42,7 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
         sequence: normalizedSequence,
         source: 'manual_ui',
       })
-      setCreatedRequest(created)
+      navigate(`/requests/${created.request_id}`)
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -64,7 +58,7 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
     <section className="page-stack">
       <div className="section-header">
         <div>
-          <h2>Submit protein sequence</h2>
+        <h2>Predict protein function</h2>
           <p>Create a new inference request for the streaming pipeline.</p>
         </div>
       </div>
@@ -92,40 +86,10 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
 
         <div className="actions-row">
           <button className="primary-button" disabled={isSubmitting} type="submit">
-            {isSubmitting ? 'Submitting...' : 'Submit request'}
+            {isSubmitting ? 'Creating request...' : 'Predict'}
           </button>
         </div>
       </form>
-
-      {createdRequest ? (
-        <section className="panel success-panel">
-          <div className="section-header compact">
-            <h2>Request created</h2>
-            <StatusBadge status={createdRequest.current_status} />
-          </div>
-          <dl className="detail-grid">
-            <div>
-              <dt>Request ID</dt>
-              <dd>{createdRequest.request_id}</dd>
-            </div>
-            <div>
-              <dt>Protein ID</dt>
-              <dd>{createdRequest.protein_id}</dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>{formatDateTime(createdRequest.created_at)}</dd>
-            </div>
-          </dl>
-          <button
-            className="secondary-button"
-            onClick={() => navigate(`/requests/${createdRequest.request_id}`)}
-            type="button"
-          >
-            Open request status
-          </button>
-        </section>
-      ) : null}
     </section>
   )
 }

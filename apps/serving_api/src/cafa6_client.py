@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any
+from typing import Any, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -38,6 +38,13 @@ class Cafa6AnalysisResult:
     confidence_summary: str
     latency_ms: int
     server_result: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Cafa6StreamEvent:
+    event: str
+    data: dict[str, Any]
+    elapsed_ms: int
 
 
 def run_cafa6_analysis(protein_id: str, sequence: str) -> Cafa6AnalysisResult:
@@ -97,6 +104,105 @@ def run_cafa6_analysis(protein_id: str, sequence: str) -> Cafa6AnalysisResult:
         confidence_summary=build_confidence_summary(protein_id, normalized_sequence, top_terms),
         latency_ms=latency_ms,
         server_result=response_payload,
+    )
+
+
+def stream_cafa6_analysis(
+    protein_id: str,
+    sequence: str,
+) -> Iterator[Cafa6StreamEvent]:
+    """Call the configured Modal SSE endpoint and yield parsed stream events."""
+    stream_url = os.getenv("CAFA6_STREAM_PREDICT_SSE_URL", "").strip()
+    if not stream_url:
+        raise Cafa6AnalysisError("CAFA6_STREAM_PREDICT_SSE_URL is not configured.")
+
+    top_k = int(os.getenv("CAFA6_TOP_K", "20"))
+    timeout_seconds = float(
+        os.getenv(
+            "CAFA6_STREAM_TIMEOUT_SECONDS",
+            os.getenv("CAFA6_TIMEOUT_SECONDS", "900"),
+        )
+    )
+    stream_batch_size = int(os.getenv("CAFA6_STREAM_BATCH_SIZE", "1"))
+    normalized_sequence = normalize_sequence(sequence)
+    validate_sequence(normalized_sequence)
+
+    payload = {
+        "records": [
+            {
+                "id": protein_id,
+                "sequence": normalized_sequence,
+            }
+        ],
+        "top_k": top_k,
+        "threshold": None,
+        "stream_batch_size": stream_batch_size,
+        "include_branch_predictions": False,
+    }
+
+    request = Request(
+        stream_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        method="POST",
+    )
+
+    started_at = perf_counter()
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            event_name = "message"
+            data_lines: list[str] = []
+            while True:
+                raw_line = response.readline()
+                if not raw_line:
+                    if data_lines:
+                        yield parse_sse_event(event_name, data_lines, started_at)
+                    break
+
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line == "":
+                    if data_lines:
+                        yield parse_sse_event(event_name, data_lines, started_at)
+                    event_name = "message"
+                    data_lines = []
+                    continue
+                if line.startswith("event:"):
+                    event_name = line.split(":", 1)[1].strip() or "message"
+                elif line.startswith("data:"):
+                    data_lines.append(line.split(":", 1)[1].strip())
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise Cafa6AnalysisError(
+            f"CAFA-6 streaming endpoint returned HTTP {exc.code}: {detail}"
+        ) from exc
+    except URLError as exc:
+        raise Cafa6AnalysisError(
+            f"Cannot reach CAFA-6 streaming endpoint: {exc.reason}"
+        ) from exc
+    except TimeoutError as exc:
+        raise Cafa6AnalysisError("CAFA-6 streaming endpoint request timed out.") from exc
+
+
+def parse_sse_event(
+    event_name: str,
+    data_lines: list[str],
+    started_at: float,
+) -> Cafa6StreamEvent:
+    raw_data = "\n".join(data_lines)
+    try:
+        parsed = json.loads(raw_data)
+    except json.JSONDecodeError as exc:
+        raise Cafa6AnalysisError(
+            "CAFA-6 streaming endpoint returned invalid SSE JSON."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise Cafa6AnalysisError(
+            "CAFA-6 streaming endpoint returned an unexpected SSE shape."
+        )
+    return Cafa6StreamEvent(
+        event=event_name,
+        data=parsed,
+        elapsed_ms=max(1, round((perf_counter() - started_at) * 1000)),
     )
 
 

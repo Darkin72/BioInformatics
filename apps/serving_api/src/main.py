@@ -25,8 +25,12 @@ from pydantic import BaseModel, ConfigDict
 
 from apps.serving_api.src.cafa6_client import (
     Cafa6AnalysisError,
+    Cafa6AnalysisResult,
+    Cafa6PredictionTerm,
     Cafa6ValidationError,
-    run_cafa6_analysis,
+    build_confidence_summary,
+    map_prediction_row,
+    stream_cafa6_analysis,
 )
 from libs.protein_rt.cassandra_store import CassandraStore
 from libs.protein_rt.config import CassandraConfig
@@ -674,6 +678,10 @@ def get_kafka_producer() -> Any | None:
             value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
             key_serializer=lambda key: key.encode("utf-8"),
             linger_ms=10,
+            retries=0,
+            max_block_ms=500,
+            request_timeout_ms=1000,
+            api_version_auto_timeout_ms=500,
         )
     except Exception:
         KAFKA_PRODUCER = None
@@ -686,7 +694,6 @@ def publish_pipeline_event(topic: str, key: str, payload: dict[str, Any]) -> Non
         return
     try:
         producer.send(topic, key=key, value=payload)
-        producer.flush(timeout=2)
     except Exception:
         pass
 
@@ -1326,6 +1333,380 @@ def login(payload: LoginRequest) -> LoginResponse:
     )
 
 
+def upsert_memory_request(request: InferenceRequest) -> None:
+    for index, item in enumerate(REQUESTS):
+        if item.request_id == request.request_id:
+            REQUESTS[index] = request
+            return
+    REQUESTS.insert(0, request)
+
+
+def upsert_memory_prediction(prediction: LatestPrediction) -> None:
+    for index, item in enumerate(PREDICTIONS):
+        if item.request_id == prediction.request_id:
+            PREDICTIONS[index] = prediction
+            return
+    PREDICTIONS.insert(0, prediction)
+
+
+def publish_request_status(
+    request: InferenceRequest,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    latency_ms: int | None = None,
+) -> None:
+    publish_pipeline_event(
+        os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
+        request.request_id,
+        request_to_event(
+            request,
+            username=username,
+            source=source,
+            latency_ms=latency_ms,
+            sequence=sequence,
+            metadata=metadata,
+        ),
+    )
+
+
+def build_prediction_event(
+    request: InferenceRequest,
+    prediction: LatestPrediction,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    latency_ms: int,
+) -> dict[str, Any]:
+    return {
+        "request_id": request.request_id,
+        "protein_id": request.protein_id,
+        "username": username,
+        "source": source,
+        "sequence": sequence,
+        "sequence_length": len(sequence),
+        "metadata": metadata,
+        "created_at": request.created_at,
+        "updated_at": request.updated_at,
+        "predicted_at": prediction.predicted_at,
+        "current_status": request.current_status,
+        "stage_name": request.stage_name,
+        "model_version": prediction.model_version,
+        "feature_version": request.feature_version,
+        "top_terms": [term.model_dump() for term in prediction.top_terms],
+        "confidence_summary": prediction.confidence_summary,
+        "server_result": prediction.server_result,
+        "latency_ms": latency_ms,
+        "event_ts": prediction.predicted_at,
+    }
+
+
+def publish_prediction_result(
+    request: InferenceRequest,
+    prediction: LatestPrediction,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    latency_ms: int,
+) -> None:
+    publish_pipeline_event(
+        os.getenv("KAFKA_PREDICTION_TOPIC", "prediction_result"),
+        request.request_id,
+        build_prediction_event(
+            request=request,
+            prediction=prediction,
+            username=username,
+            source=source,
+            sequence=sequence,
+            metadata=metadata,
+            latency_ms=latency_ms,
+        ),
+    )
+
+
+def analysis_from_stream_batch(
+    protein_id: str,
+    sequence: str,
+    batch: dict[str, Any],
+    latency_ms: int,
+) -> Cafa6AnalysisResult:
+    predictions = batch.get("predictions")
+    if not isinstance(predictions, list):
+        raise Cafa6AnalysisError("CAFA-6 stream batch is missing predictions.")
+
+    top_k = int(os.getenv("CAFA6_TOP_K", "20"))
+    top_terms: list[Cafa6PredictionTerm] = [
+        map_prediction_row(row)
+        for row in predictions
+        if isinstance(row, dict) and str(row.get("protein_id", protein_id)) == protein_id
+    ]
+    if not top_terms:
+        top_terms = [map_prediction_row(row) for row in predictions if isinstance(row, dict)]
+    top_terms = sorted(top_terms, key=lambda term: term.score, reverse=True)[:top_k]
+
+    model_payload = batch.get("model")
+    model_name = "ensemble"
+    if isinstance(model_payload, dict) and model_payload.get("name"):
+        model_name = str(model_payload["name"])
+
+    return Cafa6AnalysisResult(
+        model_version=f"cafa6-modal-{model_name}",
+        feature_version="cafa6-modal-streaming-v1",
+        top_terms=top_terms,
+        confidence_summary=build_confidence_summary(protein_id, sequence, top_terms),
+        latency_ms=latency_ms,
+        server_result=batch,
+    )
+
+
+def complete_request_from_analysis(
+    request_id: str,
+    protein_id: str,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+    analysis: Any,
+) -> InferenceRequest:
+    completed = InferenceRequest(
+        request_id=request_id,
+        protein_id=protein_id,
+        username=username,
+        source=source,
+        created_at=created_at,
+        updated_at=app_now().isoformat(),
+        current_status="completed",
+        stage_name="prediction_written",
+        retry_count=0,
+        model_version=analysis.model_version,
+        feature_version=analysis.feature_version,
+    )
+    upsert_memory_request(completed)
+    REQUEST_LATENCIES_MS[request_id] = analysis.latency_ms
+
+    prediction = LatestPrediction(
+        protein_id=protein_id,
+        request_id=request_id,
+        predicted_at=completed.updated_at or app_now().isoformat(),
+        model_version=analysis.model_version,
+        top_terms=[
+            enrich_prediction_term(
+                PredictionTerm(
+                    term_id=term.term_id,
+                    term_name=term.term_name,
+                    ontology=term.ontology,
+                    score=term.score,
+                )
+            )
+            for term in analysis.top_terms
+        ],
+        confidence_summary=analysis.confidence_summary,
+        server_result=analysis.server_result,
+    )
+    upsert_memory_prediction(prediction)
+    publish_request_status(
+        completed,
+        username=username,
+        source=source,
+        sequence=sequence,
+        metadata=metadata,
+        latency_ms=analysis.latency_ms,
+    )
+    publish_prediction_result(
+        completed,
+        prediction,
+        username=username,
+        source=source,
+        sequence=sequence,
+        metadata=metadata,
+        latency_ms=analysis.latency_ms,
+    )
+    return completed
+
+
+def fail_request(
+    request_id: str,
+    protein_id: str,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+    stage_name: str,
+    error_code: str,
+    error_message: str,
+) -> InferenceRequest:
+    failed = InferenceRequest(
+        request_id=request_id,
+        protein_id=protein_id,
+        username=username,
+        source=source,
+        created_at=created_at,
+        updated_at=app_now().isoformat(),
+        current_status="failed",
+        stage_name=stage_name,
+        error_code=error_code,
+        error_message=error_message,
+        retry_count=0,
+    )
+    upsert_memory_request(failed)
+    publish_request_status(
+        failed,
+        username=username,
+        source=source,
+        sequence=sequence,
+        metadata=metadata,
+    )
+    return failed
+
+
+def process_cafa6_streaming_request(
+    request_id: str,
+    protein_id: str,
+    username: str,
+    source: str,
+    sequence: str,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+) -> None:
+    try:
+        connecting = InferenceRequest(
+            request_id=request_id,
+            protein_id=protein_id,
+            username=username,
+            source=source,
+            created_at=created_at,
+            updated_at=app_now().isoformat(),
+            current_status="processing",
+            stage_name="modal_connecting",
+            retry_count=0,
+        )
+        upsert_memory_request(connecting)
+        publish_request_status(
+            connecting,
+            username=username,
+            source=source,
+            sequence=sequence,
+            metadata=metadata,
+        )
+
+        latest_batch: dict[str, Any] | None = None
+        latest_latency_ms = 0
+        for stream_event in stream_cafa6_analysis(protein_id=protein_id, sequence=sequence):
+            latest_latency_ms = stream_event.elapsed_ms
+            if stream_event.event == "start":
+                streaming = InferenceRequest(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    created_at=created_at,
+                    updated_at=app_now().isoformat(),
+                    current_status="processing",
+                    stage_name="modal_stream_started",
+                    retry_count=0,
+                )
+                upsert_memory_request(streaming)
+                publish_request_status(
+                    streaming,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    latency_ms=stream_event.elapsed_ms,
+                )
+            elif stream_event.event == "batch":
+                latest_batch = stream_event.data
+                streaming = InferenceRequest(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    created_at=created_at,
+                    updated_at=app_now().isoformat(),
+                    current_status="processing",
+                    stage_name=f"modal_batch_{stream_event.data.get('batch_index', 0)}",
+                    retry_count=0,
+                    model_version="cafa6-modal-ensemble",
+                    feature_version="cafa6-modal-streaming-v1",
+                )
+                upsert_memory_request(streaming)
+                publish_request_status(
+                    streaming,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    latency_ms=stream_event.elapsed_ms,
+                )
+            elif stream_event.event == "error":
+                fail_request(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    created_at=created_at,
+                    stage_name="modal_stream_error",
+                    error_code=str(stream_event.data.get("error_type", "STREAM_ERROR")),
+                    error_message=str(
+                        stream_event.data.get("message", "Streaming inference failed.")
+                    ),
+                )
+                return
+
+        if latest_batch is None:
+            raise Cafa6AnalysisError("CAFA-6 streaming endpoint returned no batch events.")
+
+        analysis = analysis_from_stream_batch(
+            protein_id=protein_id,
+            sequence=sequence,
+            batch=latest_batch,
+            latency_ms=latest_latency_ms,
+        )
+        complete_request_from_analysis(
+            request_id=request_id,
+            protein_id=protein_id,
+            username=username,
+            source=source,
+            sequence=sequence,
+            metadata=metadata,
+            created_at=created_at,
+            analysis=analysis,
+        )
+    except Cafa6ValidationError as exc:
+        fail_request(
+            request_id,
+            protein_id,
+            username,
+            source,
+            sequence,
+            metadata,
+            created_at,
+            "validation",
+            "INVALID_SEQUENCE",
+            str(exc),
+        )
+    except Cafa6AnalysisError as exc:
+        fail_request(
+            request_id,
+            protein_id,
+            username,
+            source,
+            sequence,
+            metadata,
+            created_at,
+            "external_analysis",
+            "ANALYSIS_API_ERROR",
+            str(exc),
+        )
+
+
 @app.post(
     "/api/auth/register",
     response_model=LoginResponse,
@@ -1581,149 +1962,21 @@ def create_inference_request(
         source=payload.source,
         metadata=payload.metadata,
     )
-    publish_pipeline_event(
-        os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
-        request_id,
-        request_to_event(
-            accepted,
-            username=current_user.username,
-            source=payload.source,
-            sequence=normalized_sequence,
-            metadata=payload.metadata,
-        ),
-    )
-
-    try:
-        analysis = run_cafa6_analysis(protein_id=protein_id, sequence=normalized_sequence)
-    except Cafa6ValidationError as exc:
-        failed = InferenceRequest(
-            request_id=request_id,
-            protein_id=protein_id,
-            username=current_user.username,
-            source=payload.source,
-            created_at=created_at,
-            updated_at=app_now().isoformat(),
-            current_status="failed",
-            stage_name="validation",
-            error_code="INVALID_SEQUENCE",
-            error_message=str(exc),
-            retry_count=0,
-        )
-        REQUESTS.insert(0, failed)
-        publish_pipeline_event(
-            os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
-            request_id,
-            request_to_event(
-                failed,
-                username=current_user.username,
-                source=payload.source,
-                sequence=normalized_sequence,
-                metadata=payload.metadata,
-            ),
-        )
-        return failed
-    except Cafa6AnalysisError as exc:
-        failed = InferenceRequest(
-            request_id=request_id,
-            protein_id=protein_id,
-            username=current_user.username,
-            source=payload.source,
-            created_at=created_at,
-            updated_at=app_now().isoformat(),
-            current_status="failed",
-            stage_name="external_analysis",
-            error_code="ANALYSIS_API_ERROR",
-            error_message=str(exc),
-            retry_count=0,
-        )
-        REQUESTS.insert(0, failed)
-        publish_pipeline_event(
-            os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
-            request_id,
-            request_to_event(
-                failed,
-                username=current_user.username,
-                source=payload.source,
-                sequence=normalized_sequence,
-                metadata=payload.metadata,
-            ),
-        )
-        return failed
-
-    created = InferenceRequest(
-        request_id=request_id,
-        protein_id=protein_id,
-        username=current_user.username,
-        source=payload.source,
-        created_at=created_at,
-        updated_at=app_now().isoformat(),
-        current_status="completed",
-        stage_name="prediction_written",
-        retry_count=0,
-        model_version=analysis.model_version,
-        feature_version=analysis.feature_version,
-    )
-    REQUESTS.insert(0, created)
-    REQUEST_LATENCIES_MS[request_id] = analysis.latency_ms
-
-    prediction = LatestPrediction(
-        protein_id=protein_id,
-        request_id=request_id,
-        predicted_at=created.updated_at or app_now().isoformat(),
-        model_version=analysis.model_version,
-        top_terms=[
-            enrich_prediction_term(
-                PredictionTerm(
-                    term_id=term.term_id,
-                    term_name=term.term_name,
-                    ontology=term.ontology,
-                    score=term.score,
-                )
-            )
-            for term in analysis.top_terms
-        ],
-        confidence_summary=analysis.confidence_summary,
-        server_result=analysis.server_result,
-    )
-    PREDICTIONS.insert(0, prediction)
-    publish_pipeline_event(
-        os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
-        request_id,
-        request_to_event(
-            created,
-            username=current_user.username,
-            source=payload.source,
-            latency_ms=analysis.latency_ms,
-            sequence=normalized_sequence,
-            metadata=payload.metadata,
-        ),
-    )
-    publish_pipeline_event(
-        os.getenv("KAFKA_PREDICTION_TOPIC", "prediction_result"),
-        request_id,
-        {
+    upsert_memory_request(accepted)
+    threading.Thread(
+        target=process_cafa6_streaming_request,
+        kwargs={
             "request_id": request_id,
             "protein_id": protein_id,
             "username": current_user.username,
             "source": payload.source,
             "sequence": normalized_sequence,
-            "sequence_length": len(normalized_sequence),
             "metadata": payload.metadata,
-            "created_at": created.created_at,
-            "updated_at": created.updated_at,
-            "predicted_at": prediction.predicted_at,
-            "current_status": "completed",
-            "stage_name": "prediction_written",
-            "model_version": analysis.model_version,
-            "feature_version": analysis.feature_version,
-            "top_terms": [term.model_dump() for term in prediction.top_terms],
-            "confidence_summary": prediction.confidence_summary,
-            "server_result": analysis.server_result,
-            "latency_ms": analysis.latency_ms,
-            "event_ts": prediction.predicted_at,
+            "created_at": created_at,
         },
-    )
-    return created
+        daemon=True,
+    ).start()
+    return accepted
 
 
 @app.get("/api/inference-requests/{request_id}", response_model=InferenceRequest)
@@ -1731,6 +1984,15 @@ def get_inference_request(
     request_id: str,
     current_user: UserPublic = Depends(require_roles("user", "admin")),
 ) -> InferenceRequest:
+    for request in REQUESTS:
+        if request.request_id == request_id:
+            if not can_access_request(request, current_user):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User does not have permission for this request",
+                )
+            return request
+
     reader = get_cassandra_reader()
     if reader:
         try:
@@ -1747,15 +2009,6 @@ def get_inference_request(
             raise
         except Exception:
             pass
-
-    for request in REQUESTS:
-        if request.request_id == request_id:
-            if not can_access_request(request, current_user):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User does not have permission for this request",
-                )
-            return request
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,

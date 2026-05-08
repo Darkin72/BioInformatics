@@ -226,9 +226,10 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
   const maxErrors = Math.max(1, ...errorEntries.map(([, count]) => count))
 
   return (
-    <section className="page-stack">
-      <div className="section-header">
+    <section className="page-stack dashboard-page">
+      <div className="section-header dashboard-hero">
         <div>
+          <p className="eyebrow">CAFA-6 streaming inference</p>
           <h2>Realtime overview</h2>
           <p>
             Updated {formatDateTime(scopedLiveSnapshot?.updated_at ?? summary.updated_at)}
@@ -240,6 +241,29 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
       </div>
 
       {error ? <ErrorState message={error} /> : null}
+
+      <div className="dashboard-system-strip">
+        <div>
+          <span>Kafka topics</span>
+          <strong>{summary.kafka_topics.length}</strong>
+          <small>observed streams</small>
+        </div>
+        <div>
+          <span>Stream</span>
+          <strong>{streamState}</strong>
+          <small>{streamState === 'offline' ? 'polling fallback' : 'live updates'}</small>
+        </div>
+        <div>
+          <span>Cassandra writes</span>
+          <strong>{cassandraEntries.length}</strong>
+          <small>serving tables</small>
+        </div>
+        <div>
+          <span>P95 latency</span>
+          <strong>{formatLatency(p95Latency)}</strong>
+          <small>completed predictions</small>
+        </div>
+      </div>
 
       <div className="metric-grid">
         <MetricCard
@@ -322,10 +346,9 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
                     style={{ background: segment.color }}
                   />
                   <strong>{segment.label}</strong>
-                  <span>
-                    {segment.value.toLocaleString()} ·{' '}
-                    {percent(segment.value, totalRequests)}%
-                  </span>
+                  <span>{segment.value.toLocaleString()}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{percent(segment.value, totalRequests)}%</span>
                 </div>
               ))}
             </div>

@@ -1,8 +1,11 @@
-# Hạ tầng
+# Infrastructure
 
-Thư mục này chứa các cấu hình hạ tầng dùng cho môi trường local/dev và các bước triển khai sau này.
+Nơi đặt các file Docker Compose, bootstrap script và schema cho môi trường local/dev.
 
-Nội dung hiện có:
+```bash
+docker compose -f infra/docker/docker-compose.yml up -d --build
+```
 
-- `cassandra/schema.cql`: schema Cassandra ban đầu cho keyspace `protein_rt`.
-- `docker/`: compose placeholder cũ, được giữ để tham khảo. Compose chính hiện nằm ở root repo trong `docker-compose.yml`.
+Stack gồm Kafka, RabbitMQ management UI, Cassandra, ingestion API, serving API và Spark streaming container. Compose tự tạo Kafka topics và chạy `infra/cassandra/schema.cql` khi Cassandra sẵn sàng.
+
+Runbook đầy đủ: [docs/runbook.md](/Users/duongminhquan/Documents/BioInformatics/docs/runbook.md).

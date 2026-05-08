@@ -8,7 +8,15 @@ dependencies = [
     "cassandra-driver>=3.29.0",
     "fastapi>=0.115.0",
     "kafka-python>=2.0.2",
+    "pika>=1.3.2",
+    "pydantic>=2.8.0",
+    "requests>=2.32.0",
     "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+spark = [
+    "pyspark==3.5.1",
 ]
 
 [build-system]
@@ -16,7 +24,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["apps*", "contracts*", "jobs*", "ml*"]
+include = ["apps*", "contracts*", "jobs*", "libs*", "ml*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -12,9 +12,9 @@ import threading
 import time
 import uuid
 from collections import Counter
-from functools import lru_cache
-from datetime import date, datetime, timedelta, timezone
 from collections.abc import Iterator
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -28,6 +28,8 @@ from apps.serving_api.src.cafa6_client import (
     Cafa6ValidationError,
     run_cafa6_analysis,
 )
+from libs.protein_rt.cassandra_store import CassandraStore
+from libs.protein_rt.config import CassandraConfig
 
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
@@ -220,6 +222,14 @@ security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
 REVOKED_TOKEN_IDS: set[str] = set()
 
+
+class AppState:
+    cassandra: CassandraStore | None = None
+    cassandra_error: str | None = None
+
+
+state_store = AppState()
+
 allowed_origins = [
     origin.strip()
     for origin in os.getenv(
@@ -240,6 +250,41 @@ app.add_middleware(
 
 def app_now() -> datetime:
     return datetime.now(APP_TIMEZONE)
+
+
+def serialize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {key: serialize_value(value) for key, value in row.items()}
+
+
+def get_cassandra_store() -> CassandraStore:
+    if state_store.cassandra is None:
+        detail = "Cassandra is not initialized"
+        if state_store.cassandra_error:
+            detail = f"{detail}: {state_store.cassandra_error}"
+        raise HTTPException(status_code=503, detail=detail)
+    return state_store.cassandra
+
+
+@app.on_event("startup")
+def startup() -> None:
+    try:
+        state_store.cassandra = CassandraStore(CassandraConfig())
+        state_store.cassandra_error = None
+    except Exception as exc:
+        state_store.cassandra = None
+        state_store.cassandra_error = str(exc)
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    if state_store.cassandra:
+        state_store.cassandra.close()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def hash_password(password: str) -> str:
@@ -1222,6 +1267,42 @@ def can_access_request(request: InferenceRequest, user: UserPublic) -> bool:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/requests/{request_id}")
+def get_cassandra_request_status(request_id: str) -> dict[str, Any]:
+    store = get_cassandra_store()
+    row = serialize_row(store.get_request_status(request_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="request_id not found")
+    return row
+
+
+@app.get("/v1/requests/{request_id}/prediction")
+def get_cassandra_request_prediction(request_id: str) -> dict[str, Any]:
+    store = get_cassandra_store()
+    row = serialize_row(store.get_prediction_by_request(request_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="prediction for request_id not found")
+    return row
+
+
+@app.get("/v1/proteins/{protein_id}/latest")
+def get_cassandra_latest_prediction(protein_id: str) -> dict[str, Any]:
+    store = get_cassandra_store()
+    row = serialize_row(store.get_latest_prediction(protein_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="protein_id not found")
+    return row
+
+
+@app.get("/v1/proteins/{protein_id}/history")
+def get_cassandra_prediction_history(
+    protein_id: str,
+    limit: int = Query(default=20, ge=1, le=200),
+) -> list[dict[str, Any]]:
+    store = get_cassandra_store()
+    return [serialize_row(row) or {} for row in store.get_prediction_history(protein_id, limit)]
 
 
 @app.post("/api/auth/login", response_model=LoginResponse)

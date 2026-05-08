@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeadLetterEvent",
+  "type": "object",
+  "required": ["request_id", "failed_at", "stage_name", "error_code", "error_message", "retryable"],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "protein_id": {
+      "type": ["string", "null"]
+    },
+    "failed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "stage_name": {
+      "type": "string"
+    },
+    "error_code": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

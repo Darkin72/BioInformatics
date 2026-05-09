@@ -11,7 +11,7 @@ APP_NAME = "cafa6-graph-aware-streaming-endpoint"
 ARTIFACT_VOLUME_NAME = "cafa6-artifacts"
 HF_CACHE_VOLUME_NAME = "cafa6-hf-cache"
 ARTIFACT_DIR = "/models/cafa6_graph_aware_artifacts"
-MAX_RECORDS_PER_REQUEST = 64
+MAX_RECORDS_PER_REQUEST = 128
 DEFAULT_STREAM_BATCH_SIZE = 8
 MAX_STREAM_BATCH_SIZE = 32
 

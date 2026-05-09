@@ -110,13 +110,19 @@ def run_cafa6_analysis(protein_id: str, sequence: str) -> Cafa6AnalysisResult:
 def stream_cafa6_analysis(
     protein_id: str,
     sequence: str,
+    model_name: str = "ensemble",
+    top_k: int | None = None,
+    threshold: float | None = None,
 ) -> Iterator[Cafa6StreamEvent]:
     """Call the configured Modal SSE endpoint and yield parsed stream events."""
-    stream_url = os.getenv("CAFA6_STREAM_PREDICT_SSE_URL", "").strip()
+    stream_url = (
+        os.getenv("CAFA6_GRAPH_AWARE_PREDICT_SSE_URL", "").strip()
+        or os.getenv("CAFA6_STREAM_PREDICT_SSE_URL", "").strip()
+    )
     if not stream_url:
-        raise Cafa6AnalysisError("CAFA6_STREAM_PREDICT_SSE_URL is not configured.")
+        raise Cafa6AnalysisError("CAFA6_GRAPH_AWARE_PREDICT_SSE_URL is not configured.")
 
-    top_k = int(os.getenv("CAFA6_TOP_K", "20"))
+    resolved_top_k = int(top_k or int(os.getenv("CAFA6_TOP_K", "20")))
     timeout_seconds = float(
         os.getenv(
             "CAFA6_STREAM_TIMEOUT_SECONDS",
@@ -134,10 +140,11 @@ def stream_cafa6_analysis(
                 "sequence": normalized_sequence,
             }
         ],
-        "top_k": top_k,
-        "threshold": None,
+        "model": model_name,
+        "top_k": resolved_top_k,
+        "threshold": threshold,
         "stream_batch_size": stream_batch_size,
-        "include_branch_predictions": False,
+        "include_branch_predictions": True,
     }
 
     request = Request(

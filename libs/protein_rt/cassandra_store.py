@@ -78,6 +78,9 @@ class CassandraStore:
         )
 
     def put_prediction(self, result: PredictionResultEvent) -> None:
+        if self.get_prediction_by_request(result.request_id):
+            return
+
         top_terms = result.predicted_terms
         top_scores = [float(result.score_map[term]) for term in top_terms]
         predictions_json = [row.model_dump_json() for row in result.predictions]

@@ -4,6 +4,7 @@ import type {
   AdminUserList,
   InferenceRequest,
   RequestTimelineEvent,
+  RetryRequestResponse,
 } from '../../shared/types'
 
 export function getAdminRequests(params: {
@@ -73,6 +74,15 @@ export function deleteAdminRequest(request: InferenceRequest) {
     `/api/admin/requests/${encodeURIComponent(request.request_id)}?${search}`,
     {
       method: 'DELETE',
+    },
+  )
+}
+
+export function retryAdminRequest(requestId: string) {
+  return apiRequest<RetryRequestResponse>(
+    `/api/inference-requests/${encodeURIComponent(requestId)}/retry`,
+    {
+      method: 'POST',
     },
   )
 }

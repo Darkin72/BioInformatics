@@ -10,7 +10,12 @@ import type {
   RequestTimelineEvent,
 } from '../../shared/types'
 import { openDashboardEvents } from '../dashboard/dashboardApi'
-import { deleteAdminRequest, getAdminRequests, getRequestTimeline } from './adminApi'
+import {
+  deleteAdminRequest,
+  getAdminRequests,
+  getRequestTimeline,
+  retryAdminRequest,
+} from './adminApi'
 
 interface AdminRequestsPageProps {
   navigate: (path: string) => void
@@ -51,6 +56,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [deletingRequestId, setDeletingRequestId] = useState<string | null>(null)
+  const [retryingRequestId, setRetryingRequestId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadRequests = useCallback(async (showLoading = false) => {
@@ -116,6 +122,26 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
       )
     } finally {
       setDeletingRequestId(null)
+    }
+  }
+
+  async function retryRequest(request: InferenceRequest) {
+    setRetryingRequestId(request.request_id)
+    try {
+      await retryAdminRequest(request.request_id)
+      await loadRequests(false)
+      setError(null)
+      if (selectedRequestId === request.request_id) {
+        await openTimeline(request.request_id)
+      }
+    } catch (retryError) {
+      setError(
+        retryError instanceof Error
+          ? retryError.message
+          : 'Unable to retry request.',
+      )
+    } finally {
+      setRetryingRequestId(null)
     }
   }
 
@@ -279,6 +305,16 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
                       >
                         {deletingRequestId === request.request_id ? 'Deleting...' : 'Delete'}
                       </button>
+                      {request.current_status === 'failed' ? (
+                        <button
+                          className="link-button"
+                          disabled={retryingRequestId === request.request_id}
+                          onClick={() => void retryRequest(request)}
+                          type="button"
+                        >
+                          {retryingRequestId === request.request_id ? 'Retrying...' : 'Retry'}
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

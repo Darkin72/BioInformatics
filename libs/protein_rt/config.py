@@ -27,14 +27,14 @@ class KafkaConfig:
 @dataclass(frozen=True)
 class RabbitMQConfig:
     url: str = env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/%2F")
-    exchange: str = env("RABBITMQ_EXCHANGE", "protein.control")
-    retry_queue: str = env("RABBITMQ_RETRY_QUEUE", "protein.retry")
-    notification_queue: str = env("RABBITMQ_NOTIFICATION_QUEUE", "protein.notification")
+    exchange: str = env("RABBITMQ_EXCHANGE", "command_exchange")
+    retry_queue: str = env("RABBITMQ_RETRY_QUEUE", "retry_inference")
+    notification_queue: str = env("RABBITMQ_NOTIFICATION_QUEUE", "notification_queue")
 
 
 @dataclass(frozen=True)
 class CassandraConfig:
-    hosts: str = env("CASSANDRA_HOSTS", "localhost")
+    hosts: str = env("CASSANDRA_HOSTS", env("CASSANDRA_HOST", "localhost"))
     port: int = env_int("CASSANDRA_PORT", 9042)
     keyspace: str = env("CASSANDRA_KEYSPACE", "protein_rt")
 

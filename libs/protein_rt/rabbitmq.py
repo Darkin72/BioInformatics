@@ -26,6 +26,16 @@ class RabbitMQPublisher:
         if self._connection.is_closed or self._channel.is_closed:
             self._connect()
 
+    def declare_queue(self, queue_name: str, routing_keys: list[str]) -> None:
+        self._ensure_open()
+        self._channel.queue_declare(queue=queue_name, durable=True)
+        for routing_key in routing_keys:
+            self._channel.queue_bind(
+                exchange=self._exchange,
+                queue=queue_name,
+                routing_key=routing_key,
+            )
+
     def publish(self, routing_key: str, payload: dict[str, Any]) -> None:
         self._ensure_open()
         self._channel.basic_publish(

@@ -33,7 +33,8 @@ from apps.serving_api.src.cafa6_client import (
     stream_cafa6_analysis,
 )
 from libs.protein_rt.cassandra_store import CassandraStore
-from libs.protein_rt.config import CassandraConfig
+from libs.protein_rt.config import CassandraConfig, RabbitMQConfig
+from libs.protein_rt.rabbitmq import RabbitMQPublisher
 
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
@@ -82,6 +83,9 @@ class CreateInferenceRequestPayload(BaseModel):
     protein_id: str
     sequence: str
     source: str
+    model: str = "ensemble"
+    top_k: int | None = None
+    threshold: float | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -131,11 +135,17 @@ class LatestPrediction(BaseModel):
     server_result: dict[str, Any] | None = None
 
 
+class RequestStreamEvent(BaseModel):
+    eventType: str
+    payload: dict[str, Any]
+    receivedAt: str
+
 class RequestResult(BaseModel):
     request: InferenceRequest
     input: RequestInput | None = None
     prediction: LatestPrediction | None = None
     server_result: dict[str, Any] | None = None
+    stream_events: list[RequestStreamEvent] = []
 
 
 class PipelineMetricPoint(BaseModel):
@@ -221,6 +231,12 @@ class RequestDeleteResponse(BaseModel):
     cleared_memory_items: int
     updated_at: str
 
+
+class RetryRequestResponse(BaseModel):
+    status: str
+    request: InferenceRequest
+    retry_count: int
+    updated_at: str
 
 security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
@@ -370,6 +386,7 @@ REQUESTS: list[InferenceRequest] = []
 PREDICTIONS: list[LatestPrediction] = []
 REQUEST_INPUTS: dict[str, RequestInput] = {}
 REQUEST_LATENCIES_MS: dict[str, int] = {}
+REQUEST_STREAM_EVENTS: dict[str, list[RequestStreamEvent]] = {}
 KAFKA_PRODUCER: Any | None = None
 CASSANDRA_READER: Any | None = None
 
@@ -705,6 +722,7 @@ def request_to_event(
     latency_ms: int | None = None,
     sequence: str | None = None,
     metadata: dict[str, Any] | None = None,
+    extra_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event = {
         **request.model_dump(),
@@ -718,6 +736,8 @@ def request_to_event(
         event["sequence_length"] = len(sequence)
     if metadata is not None:
         event["metadata"] = metadata
+    if extra_payload:
+        event.update(extra_payload)
     return event
 
 
@@ -1271,6 +1291,61 @@ def can_access_request(request: InferenceRequest, user: UserPublic) -> bool:
     return user_is_admin(user) or request.username == user.username
 
 
+def input_for_retry(request: InferenceRequest) -> RequestInput | None:
+    request_input = REQUEST_INPUTS.get(request.request_id) or cassandra_input_for_request(request)
+    if request_input and request_input.sequence:
+        return request_input
+    reader = get_cassandra_reader()
+    if reader:
+        try:
+            for row in reader.request_timeline(request.request_id, limit=200):
+                raw_payload = row.get("payload")
+                if not raw_payload:
+                    continue
+                payload = json.loads(str(raw_payload))
+                sequence = payload.get("sequence")
+                if sequence:
+                    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+                    return RequestInput(
+                        protein_id=str(payload.get("protein_id", request.protein_id)),
+                        sequence=str(sequence),
+                        sequence_length=len(str(sequence)),
+                        source=str(payload.get("source", request.source or "retry")),
+                        metadata=metadata,
+                    )
+        except Exception:
+            return None
+    return None
+
+def publish_retry_command(
+    request: InferenceRequest,
+    request_input: RequestInput,
+    retry_count: int,
+) -> None:
+    try:
+        rabbit_config = RabbitMQConfig()
+        publisher = RabbitMQPublisher(rabbit_config.url, rabbit_config.exchange)
+        publisher.declare_queue(rabbit_config.notification_queue, ["request.*"])
+        publisher.publish(
+            "request.retry_requested",
+            {
+                "request_id": request.request_id,
+                "protein_id": request.protein_id,
+                "source": request.source or "serving_api",
+                "retry_count": retry_count,
+                "raw_event": {
+                    "request_id": request.request_id,
+                    "protein_id": request.protein_id,
+                    "sequence": request_input.sequence,
+                    "source": request_input.source or request.source or "serving_api",
+                    "metadata": request_input.metadata or {},
+                },
+            },
+        )
+        publisher.close()
+    except Exception:
+        pass
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -1348,6 +1423,21 @@ def upsert_memory_prediction(prediction: LatestPrediction) -> None:
             return
     PREDICTIONS.insert(0, prediction)
 
+def append_request_stream_event(
+    request_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    events = REQUEST_STREAM_EVENTS.setdefault(request_id, [])
+    events.append(
+        RequestStreamEvent(
+            eventType=event_type,
+            payload=serialize_value(payload),
+            receivedAt=app_now().isoformat(),
+        )
+    )
+    del events[:-80]
+
 
 def publish_request_status(
     request: InferenceRequest,
@@ -1356,18 +1446,23 @@ def publish_request_status(
     sequence: str,
     metadata: dict[str, Any] | None,
     latency_ms: int | None = None,
+    extra_payload: dict[str, Any] | None = None,
 ) -> None:
+    event_payload = request_to_event(
+        request,
+        username=username,
+        source=source,
+        latency_ms=latency_ms,
+        sequence=sequence,
+        metadata=metadata,
+        extra_payload=extra_payload,
+    )
+    if extra_payload and extra_payload.get("modal_event"):
+        append_request_stream_event(request.request_id, "request_status", event_payload)
     publish_pipeline_event(
         os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
         request.request_id,
-        request_to_event(
-            request,
-            username=username,
-            source=source,
-            latency_ms=latency_ms,
-            sequence=sequence,
-            metadata=metadata,
-        ),
+        event_payload,
     )
 
 
@@ -1471,6 +1566,7 @@ def complete_request_from_analysis(
     metadata: dict[str, Any] | None,
     created_at: str,
     analysis: Any,
+    retry_count: int = 0,
 ) -> InferenceRequest:
     completed = InferenceRequest(
         request_id=request_id,
@@ -1481,7 +1577,7 @@ def complete_request_from_analysis(
         updated_at=app_now().isoformat(),
         current_status="completed",
         stage_name="prediction_written",
-        retry_count=0,
+        retry_count=retry_count,
         model_version=analysis.model_version,
         feature_version=analysis.feature_version,
     )
@@ -1515,6 +1611,10 @@ def complete_request_from_analysis(
         sequence=sequence,
         metadata=metadata,
         latency_ms=analysis.latency_ms,
+        extra_payload={
+            "modal_event": "prediction_result",
+            "modal_data": analysis.server_result,
+        },
     )
     publish_prediction_result(
         completed,
@@ -1539,6 +1639,7 @@ def fail_request(
     stage_name: str,
     error_code: str,
     error_message: str,
+    retry_count: int = 0,
 ) -> InferenceRequest:
     failed = InferenceRequest(
         request_id=request_id,
@@ -1551,7 +1652,7 @@ def fail_request(
         stage_name=stage_name,
         error_code=error_code,
         error_message=error_message,
-        retry_count=0,
+        retry_count=retry_count,
     )
     upsert_memory_request(failed)
     publish_request_status(
@@ -1560,6 +1661,24 @@ def fail_request(
         source=source,
         sequence=sequence,
         metadata=metadata,
+    )
+    publish_pipeline_event(
+        os.getenv("KAFKA_DEAD_LETTER_TOPIC", "dead_letter"),
+        request_id,
+        {
+            "request_id": request_id,
+            "protein_id": protein_id,
+            "username": username,
+            "source": source,
+            "sequence": sequence,
+            "metadata": metadata,
+            "failed_at": failed.updated_at,
+            "stage_name": stage_name,
+            "error_code": error_code,
+            "error_message": error_message,
+            "retryable": error_code != "INVALID_SEQUENCE",
+            "retry_count": retry_count,
+        },
     )
     return failed
 
@@ -1570,8 +1689,12 @@ def process_cafa6_streaming_request(
     username: str,
     source: str,
     sequence: str,
+    model_name: str,
+    top_k: int | None,
+    threshold: float | None,
     metadata: dict[str, Any] | None,
     created_at: str,
+    retry_count: int = 0,
 ) -> None:
     try:
         connecting = InferenceRequest(
@@ -1583,7 +1706,7 @@ def process_cafa6_streaming_request(
             updated_at=app_now().isoformat(),
             current_status="processing",
             stage_name="modal_connecting",
-            retry_count=0,
+            retry_count=retry_count,
         )
         upsert_memory_request(connecting)
         publish_request_status(
@@ -1596,9 +1719,16 @@ def process_cafa6_streaming_request(
 
         latest_batch: dict[str, Any] | None = None
         latest_latency_ms = 0
-        for stream_event in stream_cafa6_analysis(protein_id=protein_id, sequence=sequence):
+        for stream_event in stream_cafa6_analysis(
+            protein_id=protein_id,
+            sequence=sequence,
+            model_name=model_name,
+            top_k=top_k,
+            threshold=threshold,
+        ):
             latest_latency_ms = stream_event.elapsed_ms
             if stream_event.event == "start":
+                model_name = str(stream_event.data.get("model", "ensemble"))
                 streaming = InferenceRequest(
                     request_id=request_id,
                     protein_id=protein_id,
@@ -1608,30 +1738,8 @@ def process_cafa6_streaming_request(
                     updated_at=app_now().isoformat(),
                     current_status="processing",
                     stage_name="modal_stream_started",
-                    retry_count=0,
-                )
-                upsert_memory_request(streaming)
-                publish_request_status(
-                    streaming,
-                    username=username,
-                    source=source,
-                    sequence=sequence,
-                    metadata=metadata,
-                    latency_ms=stream_event.elapsed_ms,
-                )
-            elif stream_event.event == "batch":
-                latest_batch = stream_event.data
-                streaming = InferenceRequest(
-                    request_id=request_id,
-                    protein_id=protein_id,
-                    username=username,
-                    source=source,
-                    created_at=created_at,
-                    updated_at=app_now().isoformat(),
-                    current_status="processing",
-                    stage_name=f"modal_batch_{stream_event.data.get('batch_index', 0)}",
-                    retry_count=0,
-                    model_version="cafa6-modal-ensemble",
+                    retry_count=retry_count,
+                    model_version=f"cafa6-modal-{model_name}",
                     feature_version="cafa6-modal-streaming-v1",
                 )
                 upsert_memory_request(streaming)
@@ -1642,6 +1750,100 @@ def process_cafa6_streaming_request(
                     sequence=sequence,
                     metadata=metadata,
                     latency_ms=stream_event.elapsed_ms,
+                    extra_payload={
+                        "modal_event": stream_event.event,
+                        "modal_data": stream_event.data,
+                    },
+                )
+            elif stream_event.event == "progress":
+                step_name = str(stream_event.data.get("step", "modal_progress"))
+                streaming = InferenceRequest(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    created_at=created_at,
+                    updated_at=app_now().isoformat(),
+                    current_status="processing",
+                    stage_name=f"modal_{step_name}",
+                    retry_count=retry_count,
+                    model_version=f"cafa6-modal-{stream_event.data.get('model', 'ensemble')}",
+                    feature_version="cafa6-modal-streaming-v1",
+                )
+                upsert_memory_request(streaming)
+                publish_request_status(
+                    streaming,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    latency_ms=stream_event.elapsed_ms,
+                    extra_payload={
+                        "modal_event": stream_event.event,
+                        "modal_step": step_name,
+                        "modal_step_status": stream_event.data.get("status"),
+                        "modal_data": stream_event.data,
+                    },
+                )
+            elif stream_event.event == "batch":
+                latest_batch = stream_event.data
+                batch_model = stream_event.data.get("model")
+                batch_model_name = "ensemble"
+                if isinstance(batch_model, dict) and batch_model.get("name"):
+                    batch_model_name = str(batch_model["name"])
+                streaming = InferenceRequest(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    created_at=created_at,
+                    updated_at=app_now().isoformat(),
+                    current_status="processing",
+                    stage_name=f"modal_batch_{stream_event.data.get('batch_index', 0)}",
+                    retry_count=retry_count,
+                    model_version=f"cafa6-modal-{batch_model_name}",
+                    feature_version="cafa6-modal-streaming-v1",
+                )
+                upsert_memory_request(streaming)
+                publish_request_status(
+                    streaming,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    latency_ms=stream_event.elapsed_ms,
+                    extra_payload={
+                        "modal_event": stream_event.event,
+                        "modal_data": stream_event.data,
+                    },
+                )
+            elif stream_event.event == "done":
+                done_model = str(stream_event.data.get("model", "ensemble"))
+                streaming = InferenceRequest(
+                    request_id=request_id,
+                    protein_id=protein_id,
+                    username=username,
+                    source=source,
+                    created_at=created_at,
+                    updated_at=app_now().isoformat(),
+                    current_status="processing",
+                    stage_name="modal_stream_done",
+                    retry_count=retry_count,
+                    model_version=f"cafa6-modal-{done_model}",
+                    feature_version="cafa6-modal-streaming-v1",
+                )
+                upsert_memory_request(streaming)
+                publish_request_status(
+                    streaming,
+                    username=username,
+                    source=source,
+                    sequence=sequence,
+                    metadata=metadata,
+                    latency_ms=stream_event.elapsed_ms,
+                    extra_payload={
+                        "modal_event": stream_event.event,
+                        "modal_data": stream_event.data,
+                    },
                 )
             elif stream_event.event == "error":
                 fail_request(
@@ -1657,6 +1859,7 @@ def process_cafa6_streaming_request(
                     error_message=str(
                         stream_event.data.get("message", "Streaming inference failed.")
                     ),
+                    retry_count=retry_count,
                 )
                 return
 
@@ -1678,6 +1881,7 @@ def process_cafa6_streaming_request(
             metadata=metadata,
             created_at=created_at,
             analysis=analysis,
+            retry_count=retry_count,
         )
     except Cafa6ValidationError as exc:
         fail_request(
@@ -1691,6 +1895,7 @@ def process_cafa6_streaming_request(
             "validation",
             "INVALID_SEQUENCE",
             str(exc),
+            retry_count=retry_count,
         )
     except Cafa6AnalysisError as exc:
         fail_request(
@@ -1704,6 +1909,7 @@ def process_cafa6_streaming_request(
             "external_analysis",
             "ANALYSIS_API_ERROR",
             str(exc),
+            retry_count=retry_count,
         )
 
 
@@ -1942,6 +2148,22 @@ def create_inference_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="protein_id is required",
         )
+    model_name = payload.model.strip().lower() or "ensemble"
+    if model_name not in {"ensemble", "esm_mlp", "protcnn", "bilstm"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="model must be one of: ensemble, esm_mlp, protcnn, bilstm",
+        )
+    if payload.top_k is not None and not 1 <= payload.top_k <= 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="top_k must be between 1 and 500",
+        )
+    if payload.threshold is not None and not 0 <= payload.threshold <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="threshold must be between 0 and 1",
+        )
 
     accepted = InferenceRequest(
         request_id=request_id,
@@ -1960,7 +2182,12 @@ def create_inference_request(
         sequence=normalized_sequence,
         sequence_length=len(normalized_sequence),
         source=payload.source,
-        metadata=payload.metadata,
+        metadata={
+            **(payload.metadata or {}),
+            "model": model_name,
+            "top_k": payload.top_k,
+            "threshold": payload.threshold,
+        },
     )
     upsert_memory_request(accepted)
     threading.Thread(
@@ -1971,6 +2198,9 @@ def create_inference_request(
             "username": current_user.username,
             "source": payload.source,
             "sequence": normalized_sequence,
+            "model_name": model_name,
+            "top_k": payload.top_k,
+            "threshold": payload.threshold,
             "metadata": payload.metadata,
             "created_at": created_at,
         },
@@ -2034,8 +2264,86 @@ def get_inference_request_result(
         input=request_input,
         prediction=prediction,
         server_result=prediction.server_result if prediction else None,
+        stream_events=REQUEST_STREAM_EVENTS.get(request_id, []),
     )
 
+
+@app.post(
+    "/api/inference-requests/{request_id}/retry",
+    response_model=RetryRequestResponse,
+)
+def retry_inference_request(
+    request_id: str,
+    current_user: UserPublic = Depends(require_roles("user", "admin")),
+) -> RetryRequestResponse:
+    request = get_inference_request(request_id, current_user)
+    if request.current_status not in {"failed", "cancelled"} and not user_is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only failed or cancelled requests can be retried.",
+        )
+
+    request_input = input_for_retry(request)
+    if not request_input or not request_input.sequence:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Original sequence is not available for retry.",
+        )
+
+    retry_count = int(request.retry_count or 0) + 1
+    now = app_now().isoformat()
+    retrying = InferenceRequest(
+        request_id=request.request_id,
+        protein_id=request.protein_id,
+        username=request.username or current_user.username,
+        source=request.source or request_input.source or "retry",
+        created_at=request.created_at,
+        updated_at=now,
+        current_status="retrying",
+        stage_name="retry_requested",
+        retry_count=retry_count,
+        model_version=request.model_version,
+        feature_version=request.feature_version,
+    )
+    REQUEST_INPUTS[request_id] = request_input
+    upsert_memory_request(retrying)
+    publish_request_status(
+        retrying,
+        username=retrying.username or current_user.username,
+        source=retrying.source or "retry",
+        sequence=request_input.sequence,
+        metadata=request_input.metadata,
+        extra_payload={"retry_requested_by": current_user.username},
+    )
+    publish_retry_command(retrying, request_input, retry_count)
+
+    metadata = request_input.metadata or {}
+    model_name = str(metadata.get("model") or "ensemble")
+    top_k = metadata.get("top_k")
+    threshold = metadata.get("threshold")
+    threading.Thread(
+        target=process_cafa6_streaming_request,
+        kwargs={
+            "request_id": retrying.request_id,
+            "protein_id": retrying.protein_id,
+            "username": retrying.username or current_user.username,
+            "source": retrying.source or "retry",
+            "sequence": request_input.sequence,
+            "model_name": model_name,
+            "top_k": int(top_k) if top_k is not None else None,
+            "threshold": float(threshold) if threshold is not None else None,
+            "metadata": metadata,
+            "created_at": retrying.created_at,
+            "retry_count": retry_count,
+        },
+        daemon=True,
+    ).start()
+    return RetryRequestResponse(
+        status="retrying",
+        request=retrying,
+        retry_count=retry_count,
+        updated_at=now,
+    )
 
 @app.get("/api/my/requests", response_model=UserRequestList)
 def list_my_requests(

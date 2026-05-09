@@ -48,6 +48,8 @@ def startup() -> None:
     rabbit_config = RabbitMQConfig()
     state.kafka = KafkaJsonProducer(kafka_config.bootstrap_servers)
     state.rabbitmq = RabbitMQPublisher(rabbit_config.url, rabbit_config.exchange)
+    state.rabbitmq.declare_queue(rabbit_config.retry_queue, ["request.retry"])
+    state.rabbitmq.declare_queue(rabbit_config.notification_queue, ["request.*"])
     state.cassandra = CassandraStore(CassandraConfig())
 
 

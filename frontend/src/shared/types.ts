@@ -78,6 +78,11 @@ export interface RequestResult {
   input?: RequestInput | null
   prediction?: LatestPrediction | null
   server_result?: Record<string, unknown> | null
+  stream_events?: Array<{
+    eventType: string
+    payload: Record<string, unknown>
+    receivedAt: string
+  }>
 }
 
 export interface PipelineMetricPoint {
@@ -175,9 +180,19 @@ export interface RequestTimelineEvent {
   payload?: string
 }
 
+export interface RetryRequestResponse {
+  status: string
+  request: InferenceRequest
+  retry_count: number
+  updated_at: string
+}
+
 export interface CreateInferenceRequestPayload {
   protein_id: string
   sequence: string
   source: string
+  model?: 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm'
+  top_k?: number | null
+  threshold?: number | null
   metadata?: Record<string, unknown>
 }

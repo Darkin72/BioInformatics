@@ -278,6 +278,39 @@ class CassandraWriter:
             payload=event,
         )
 
+    def write_dead_letter(self, event: dict[str, Any]) -> None:
+        failed_at = parse_ts(event.get("failed_at") or event.get("event_ts"))
+        error_code = str(event.get("error_code", "UNKNOWN"))
+        request_id = str(event.get("request_id", "unknown"))
+        self._session.execute(
+            """
+            INSERT INTO failed_requests_by_time (
+                failure_date, status_code, failed_at, request_id, protein_id,
+                stage_name, reason, retryable
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                failed_at.date(),
+                error_code,
+                failed_at,
+                request_id,
+                event.get("protein_id"),
+                event.get("stage_name"),
+                event.get("error_message") or event.get("message"),
+                bool(event.get("retryable", False)),
+            ),
+        )
+        self.write_timeline(
+            request_id=request_id,
+            event_ts=failed_at,
+            event_type="dead_letter",
+            stage_name=event.get("stage_name"),
+            status="failed",
+            message=event.get("error_message") or event.get("message"),
+            latency_ms=event.get("latency_ms"),
+            payload=event,
+        )
+
     def write_metric(
         self,
         metric_name: str,
@@ -480,6 +513,7 @@ def handle_event(writer: CassandraWriter | None, event_type: str, payload: dict[
                 writer.write_prediction(payload)
                 writer.write_request_status({**payload, "current_status": "completed"})
             elif event_type == "dead_letter":
+                writer.write_dead_letter(payload)
                 writer.write_request_status({**payload, "current_status": "failed"})
 
             now_minute = app_now().replace(second=0, microsecond=0)

@@ -16,12 +16,15 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5174,http://127.0.0.1:5174}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_RETRY_QUEUE: ${RABBITMQ_RETRY_QUEUE:-retry_inference}
       CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
       CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
       CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
       DATABASE_URL: ${DATABASE_URL:-postgresql://protein:protein@postgres:5432/protein_metadata}
       CAFA6_HEALTH_URL: ${CAFA6_HEALTH_URL:-}
       CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_GRAPH_AWARE_PREDICT_SSE_URL: ${CAFA6_GRAPH_AWARE_PREDICT_SSE_URL:-}
       CAFA6_STREAM_PREDICT_SSE_URL: ${CAFA6_STREAM_PREDICT_SSE_URL:-}
       CAFA6_STREAM_BATCH_SIZE: ${CAFA6_STREAM_BATCH_SIZE:-1}
       CAFA6_STREAM_TIMEOUT_SECONDS: ${CAFA6_STREAM_TIMEOUT_SECONDS:-900}
@@ -48,6 +51,71 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    restart: unless-stopped
+
+  replay-service:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-replay-service
+    command:
+      - uvicorn
+      - apps.replay_service.src.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8005"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_NOTIFICATION_QUEUE: ${RABBITMQ_NOTIFICATION_QUEUE:-notification_queue}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    ports:
+      - "${REPLAY_HOST_PORT:-8005}:8005"
+    volumes:
+      - ./cafa6:/app/cafa6:ro
+      - ./tmp:/app/tmp
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  retry-worker:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-retry-worker
+    command:
+      - python
+      - -m
+      - apps.retry_worker.src.main
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_RETRY_QUEUE: ${RABBITMQ_RETRY_QUEUE:-retry_inference}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
   notification-service:

@@ -8,7 +8,13 @@ import requests
 
 from libs.protein_rt.cassandra_store import CassandraStore
 from libs.protein_rt.config import CassandraConfig, KafkaConfig, ModalConfig
-from libs.protein_rt.events import DeadLetterEvent, PredictionResultEvent, PredictionRow, RawProteinInputEvent
+from libs.protein_rt.events import (
+    DeadLetterEvent,
+    PredictionResultEvent,
+    PredictionRow,
+    RawProteinInputEvent,
+    sequence_checksum,
+)
 from libs.protein_rt.kafka_io import KafkaJsonProducer
 
 
@@ -31,6 +37,23 @@ def _spark_session():
 
 def _parse_event(raw_value: str) -> RawProteinInputEvent:
     return RawProteinInputEvent.model_validate_json(raw_value)
+
+def _deduplicate_events(events: list[RawProteinInputEvent]) -> list[RawProteinInputEvent]:
+    seen_request_ids: set[str] = set()
+    seen_checksums: set[tuple[str, str]] = set()
+    unique_events: list[RawProteinInputEvent] = []
+    for event in events:
+        checksum = event.checksum or sequence_checksum(event.sequence)
+        checksum_key = (event.protein_id, checksum)
+        if event.request_id in seen_request_ids or checksum_key in seen_checksums:
+            continue
+        seen_request_ids.add(event.request_id)
+        seen_checksums.add(checksum_key)
+        unique_events.append(event)
+    return unique_events
+
+def _feature_hash(event: RawProteinInputEvent) -> str:
+    return sequence_checksum(f"{event.protein_id}:{event.sequence}:{event.metadata}")
 
 
 def _event_top_k(event: RawProteinInputEvent, default_top_k: int) -> int:
@@ -135,11 +158,24 @@ def _persist_batch(batch_df, batch_id: int) -> None:
             try:
                 event = _parse_event(value)
                 valid_events.append(event)
+                store.put_raw_event(event)
+                store.put_feature_snapshot(
+                    request_id=event.request_id,
+                    protein_id=event.protein_id,
+                    feature_version="sequence_v1",
+                    feature_hash=_feature_hash(event),
+                    feature_payload_ref=f"cassandra://raw_protein_events/{event.request_id}",
+                )
                 store.put_request_status(
                     request_id=event.request_id,
                     protein_id=event.protein_id,
                     status="VALIDATED",
                     stage_name="spark_validation",
+                )
+                producer.send(
+                    kafka_config.validated_topic,
+                    key=event.protein_id,
+                    value=event,
                 )
             except Exception as exc:
                 dead_letter = DeadLetterEvent(
@@ -157,15 +193,38 @@ def _persist_batch(batch_df, batch_id: int) -> None:
                 )
                 print(dead_letter.model_dump_json())
 
-        grouped_events: dict[tuple[int, float | None], list[RawProteinInputEvent]] = {}
+        deduped_events = _deduplicate_events(valid_events)
+        duplicate_count = len(valid_events) - len(deduped_events)
         for event in valid_events:
+            if event not in deduped_events:
+                store.put_request_status(
+                    request_id=event.request_id,
+                    protein_id=event.protein_id,
+                    status="SKIPPED",
+                    stage_name="spark_dedup",
+                    error_code="DUPLICATE_EVENT",
+                    error_message="Duplicate request_id or protein checksum in micro-batch.",
+                )
+
+        grouped_events: dict[tuple[int, float | None], list[RawProteinInputEvent]] = {}
+        for event in deduped_events:
             group_key = (_event_top_k(event, modal_config.top_k), _event_threshold(event))
             grouped_events.setdefault(group_key, []).append(event)
 
+        started_at = time.perf_counter()
+        prediction_count = 0
+        failure_count = 0
         for (top_k, threshold), events in grouped_events.items():
             for offset in range(0, len(events), 64):
                 chunk = events[offset : offset + 64]
                 try:
+                    for event in chunk:
+                        store.put_request_status(
+                            request_id=event.request_id,
+                            protein_id=event.protein_id,
+                            status="PROCESSING",
+                            stage_name="spark_modal_inference",
+                        )
                     modal_response, latency_ms = _call_modal(
                         chunk,
                         modal_config,
@@ -174,6 +233,7 @@ def _persist_batch(batch_df, batch_id: int) -> None:
                     )
                     for result in _result_events(chunk, modal_response, latency_ms):
                         store.put_prediction(result)
+                        prediction_count += 1
                         producer.send(
                             kafka_config.prediction_topic,
                             key=result.protein_id,
@@ -182,6 +242,7 @@ def _persist_batch(batch_df, batch_id: int) -> None:
                         print(result.model_dump_json())
                 except Exception as exc:
                     for event in chunk:
+                        failure_count += 1
                         store.put_request_status(
                             request_id=event.request_id,
                             protein_id=event.protein_id,
@@ -206,6 +267,14 @@ def _persist_batch(batch_df, batch_id: int) -> None:
                             value=dead_letter,
                         )
                         print(dead_letter.model_dump_json())
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        tags = {"job": "spark_streaming", "batch": str(batch_id)}
+        store.put_pipeline_metric("spark_batch_input_events", float(len(values)), tags)
+        store.put_pipeline_metric("spark_batch_valid_events", float(len(valid_events)), tags)
+        store.put_pipeline_metric("spark_batch_duplicate_events", float(duplicate_count), tags)
+        store.put_pipeline_metric("spark_batch_predictions", float(prediction_count), tags)
+        store.put_pipeline_metric("spark_batch_failures", float(failure_count), tags)
+        store.put_pipeline_metric("spark_batch_latency_ms", float(elapsed_ms), tags)
     finally:
         producer.flush()
         store.close()

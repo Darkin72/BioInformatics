@@ -1,5 +1,10 @@
 import { EVENTS_BASE_URL, apiRequest } from '../../shared/apiClient'
-import type { InferenceRequest, RequestResult, UserRequestList } from '../../shared/types'
+import type {
+  InferenceRequest,
+  LatestPrediction,
+  RequestResult,
+  UserRequestList,
+} from '../../shared/types'
 
 export interface RequestStreamEvent {
   eventType: string
@@ -16,6 +21,14 @@ export function getRequestStatus(requestId: string) {
 export function getRequestResult(requestId: string) {
   return apiRequest<RequestResult>(
     `/api/inference-requests/${encodeURIComponent(requestId)}/result`,
+  )
+}
+
+export function getRequestProteinResult(requestId: string, proteinId: string) {
+  return apiRequest<LatestPrediction>(
+    `/api/inference-requests/${encodeURIComponent(requestId)}/proteins/${encodeURIComponent(
+      proteinId,
+    )}/result`,
   )
 }
 

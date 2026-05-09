@@ -632,8 +632,8 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 - [x] Tạo schema ban đầu cho dataset catalog, model registry, replay campaign và operator audit log
 - [ ] Thiết kế bảng user/role/permission nếu auth chuyển khỏi in-memory
 - [ ] Thêm migration tool như Alembic cho schema PostgreSQL
-- [ ] Viết repository/service cho PostgreSQL trong Serving API
-- [ ] Kết nối model registry và replay campaign vào API/dashboard
+- [x] Viết repository/service cho PostgreSQL trong Serving API
+- [x] Kết nối model registry và replay campaign vào API/dashboard
 
 #### Deliverable
 
@@ -659,31 +659,31 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **4.1 Input ingestion**
 
-- [ ] Đọc raw event từ Kafka
-- [ ] Parse JSON schema
-- [ ] Reject event lỗi format
-- [ ] Ghi event lỗi vào DLQ
+- [x] Đọc raw event từ Kafka
+- [x] Parse JSON schema
+- [x] Reject event lỗi format
+- [x] Ghi event lỗi vào DLQ
 
 **4.2 Validation & normalization**
 
-- [ ] Validate protein sequence
-- [ ] Normalize metadata
-- [ ] Khử duplicate theo request_id/checksum
-- [ ] Gắn processing timestamp
+- [x] Validate protein sequence
+- [x] Normalize metadata
+- [x] Khử duplicate theo request_id/checksum
+- [x] Gắn processing timestamp
 
 **4.3 Feature preparation**
 
 - [x] Chuẩn hóa input cho solution đã chọn
-- [ ] Sinh feature/embedding
-- [ ] Cache hoặc reference feature snapshot
-- [ ] Ghi feature metadata vào Cassandra
+- [x] Sinh feature/embedding
+- [x] Cache hoặc reference feature snapshot
+- [x] Ghi feature metadata vào Cassandra
 
 **4.4 Inference orchestration**
 
-- [ ] Gọi module inference trực tiếp trong Spark hoặc qua service
-- [ ] Hỗ trợ micro-batch scoring
+- [x] Gọi module inference trực tiếp trong Spark hoặc qua service
+- [x] Hỗ trợ micro-batch scoring
 - [x] Gắn model_version
-- [ ] Bắt lỗi timeout/failure
+- [x] Bắt lỗi timeout/failure
 
 **4.5 Post-processing**
 
@@ -694,10 +694,10 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **4.6 Operational metrics**
 
-- [ ] Tính latency từng stage
-- [ ] Tính throughput theo micro-batch
+- [x] Tính latency từng stage
+- [x] Tính throughput theo micro-batch
 - [x] Tính error rate
-- [ ] Ghi metrics về Cassandra và monitoring sink
+- [x] Ghi metrics về Cassandra và monitoring sink
 
 #### Deliverable
 
@@ -777,9 +777,9 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **6.3 Auth và access control (nếu cần)**
 
-- [ ] Basic authentication cho nội bộ
-- [ ] Role phân quyền viewer/operator/admin
-- [ ] Audit log cho thao tác retry
+- [x] Basic authentication cho nội bộ
+- [x] Role phân quyền viewer/operator/admin
+- [x] Audit log cho thao tác retry
 
 #### Deliverable
 
@@ -889,8 +889,8 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 - [ ] phân tích data source CAFA-6
 - [x] chuẩn hóa event schema
 - [x] dựng replay generator
-- [ ] xây Spark ingestion
-- [ ] xây validation/dedup stage
+- [x] xây Spark ingestion
+- [x] xây validation/dedup stage
 - [x] tích hợp ghi Cassandra
 - [ ] benchmark pipeline throughput
 
@@ -1038,33 +1038,33 @@ Dưới đây là backlog rất nhỏ, có thể đưa vào Jira/Trello.
 - [x] F2.1. Thêm service PostgreSQL vào Docker Compose
 - [x] F2.2. Tạo schema metadata ban đầu
 - [ ] F2.3. Thiết kế bảng user/role/permission
-- [ ] F2.4. Thiết kế bảng model registry đầy đủ
-- [ ] F2.5. Thiết kế bảng dataset/replay campaign đầy đủ
+- [x] F2.4. Thiết kế bảng model registry đầy đủ
+- [x] F2.5. Thiết kế bảng dataset/replay campaign đầy đủ
 - [ ] F2.6. Viết migration bằng Alembic
-- [ ] F2.7. Tích hợp Serving API với PostgreSQL
+- [x] F2.7. Tích hợp Serving API với PostgreSQL
 - [ ] F2.8. Viết integration test cho PostgreSQL repository
 
 ### Epic G - Spark streaming pipeline
 
-- [ ] G1. Tạo Spark project skeleton
-- [ ] G2. Đọc stream từ Kafka
-- [ ] G3. Parse raw JSON
-- [ ] G4. Validate required fields
-- [ ] G5. Validate amino acid sequence
-- [ ] G6. Deduplicate theo request_id
-- [ ] G7. Ghi raw events vào Cassandra
-- [ ] G8. Gọi feature builder
-- [ ] G9. Gọi predictor
-- [ ] G10. Post-process output
-- [ ] G11. Ghi prediction vào Cassandra
-- [ ] G12. Ghi status update vào Cassandra
-- [ ] G13. Ghi metrics theo time window
-- [ ] G14. Ghi lỗi vào DLQ
+- [x] G1. Tạo Spark project skeleton
+- [x] G2. Đọc stream từ Kafka
+- [x] G3. Parse raw JSON
+- [x] G4. Validate required fields
+- [x] G5. Validate amino acid sequence
+- [x] G6. Deduplicate theo request_id
+- [x] G7. Ghi raw events vào Cassandra
+- [x] G8. Gọi feature builder
+- [x] G9. Gọi predictor
+- [x] G10. Post-process output
+- [x] G11. Ghi prediction vào Cassandra
+- [x] G12. Ghi status update vào Cassandra
+- [x] G13. Ghi metrics theo time window
+- [x] G14. Ghi lỗi vào DLQ
 
 ### Epic H - Inference package
 
 - [x] H1. Chuẩn hóa preprocess function
-- [ ] H2. Chuẩn hóa feature function
+- [x] H2. Chuẩn hóa feature function
 - [ ] H3. Tải model artifact
 - [x] H4. Viết predict() interface
 - [x] H5. Viết postprocess() interface
@@ -1270,8 +1270,8 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 
 ### Sprint 2
 
-- [ ] Spark đọc Kafka và validate event
-- [ ] Ghi raw events và request status vào Cassandra
+- [x] Spark đọc Kafka và validate event
+- [x] Ghi raw events và request status vào Cassandra
 - [x] Đóng gói inference module v1
 - [x] API lấy request status và latest prediction bằng CAFA-6 Modal endpoint trên sequence thật
 - [x] Dashboard throughput + error rate cơ bản

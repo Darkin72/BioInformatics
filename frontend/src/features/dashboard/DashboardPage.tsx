@@ -188,10 +188,7 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
     liveThroughputHasData || !summaryThroughputHasData
       ? scopedLiveSnapshot?.throughput ?? summary.throughput
       : summary.throughput
-  const statusCounts = {
-    ...summary.status_counts,
-    ...(scopedLiveSnapshot?.status_counts ?? {}),
-  }
+  const statusCounts = summary.status_counts
   const cassandraWriteTables =
     scopedLiveSnapshot?.cassandra.write_tables ?? summary.cassandra_write_tables
   const cassandraPatterns =

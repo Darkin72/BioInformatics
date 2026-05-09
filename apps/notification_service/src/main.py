@@ -207,6 +207,16 @@ class CassandraWriter:
                 event.get("feature_version"),
             ),
         )
+        self.write_request_protein_links(
+            event=event,
+            request_id=request_id,
+            request_date=request_date,
+            created_at=created_at,
+            updated_at=updated_at,
+            username=username,
+            source=source,
+            status=status,
+        )
         self.write_timeline(
             request_id=request_id,
             event_ts=updated_at,
@@ -218,10 +228,101 @@ class CassandraWriter:
             payload=event,
         )
 
+    def write_request_protein_links(
+        self,
+        event: dict[str, Any],
+        request_id: str,
+        request_date: date,
+        created_at: datetime,
+        updated_at: datetime,
+        username: str,
+        source: str,
+        status: str,
+    ) -> None:
+        raw_records = event.get("input_records")
+        records = raw_records if isinstance(raw_records, list) else []
+        if not records:
+            protein_id = str(event.get("protein_id", "")).strip()
+            if not protein_id:
+                return
+            records = [
+                {
+                    "protein_id": protein_id,
+                    "sequence_length": event.get("sequence_length"),
+                    "description": None,
+                }
+            ]
+
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            record_protein_id = str(item.get("protein_id") or item.get("id") or "").strip()
+            if not record_protein_id:
+                continue
+            sequence_length = item.get("sequence_length")
+            if sequence_length is None and item.get("sequence") is not None:
+                sequence_length = len(str(item.get("sequence")))
+            description = (
+                str(item["description"])
+                if item.get("description") is not None
+                else None
+            )
+            row = (
+                request_id,
+                record_protein_id,
+                request_date,
+                created_at,
+                updated_at,
+                username,
+                source,
+                status,
+                event.get("stage_name"),
+                int(sequence_length) if sequence_length is not None else None,
+                description,
+                event.get("model_version"),
+                event.get("feature_version"),
+            )
+            self._session.execute(
+                """
+                INSERT INTO request_proteins_by_request (
+                    request_id, protein_id, request_date, created_at, updated_at,
+                    username, source, current_status, stage_name, sequence_length,
+                    description, model_version, feature_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                row,
+            )
+            self._session.execute(
+                """
+                INSERT INTO protein_requests_by_protein (
+                    protein_id, created_at, request_id, request_date, updated_at,
+                    username, source, current_status, stage_name, sequence_length,
+                    description, model_version, feature_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    record_protein_id,
+                    created_at,
+                    request_id,
+                    request_date,
+                    updated_at,
+                    username,
+                    source,
+                    status,
+                    event.get("stage_name"),
+                    int(sequence_length) if sequence_length is not None else None,
+                    description,
+                    event.get("model_version"),
+                    event.get("feature_version"),
+                ),
+            )
+
     def write_prediction(self, event: dict[str, Any]) -> None:
         protein_id = str(event["protein_id"])
         request_id = str(event["request_id"])
         predicted_at = parse_ts(event.get("predicted_at") or event.get("event_ts"))
+        request_date = parse_ts(event.get("created_at") or event.get("event_ts")).date()
+        created_at = parse_ts(event.get("created_at") or event.get("event_ts"))
         top_terms_payload = event.get("top_terms", [])
         top_terms: list[str] = []
         top_scores: list[float] = []
@@ -266,6 +367,25 @@ class CassandraWriter:
                 event.get("confidence_summary"),
                 int(event.get("latency_ms", 0) or 0),
             ),
+        )
+        self.write_request_protein_links(
+            event={
+                **event,
+                "input_records": [
+                    {
+                        "protein_id": protein_id,
+                        "sequence_length": event.get("sequence_length"),
+                    }
+                ],
+                "stage_name": "prediction_written",
+            },
+            request_id=request_id,
+            request_date=request_date,
+            created_at=created_at,
+            updated_at=predicted_at,
+            username=str(event.get("username", "system")),
+            source=str(event.get("source", "pipeline")),
+            status="completed",
         )
         self.write_timeline(
             request_id=request_id,
@@ -402,7 +522,7 @@ class Broadcaster:
 class MetricAggregator:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._status_counts: Counter[str] = Counter()
+        self._status_by_request_id: dict[str, str] = {}
         self._latencies: deque[int] = deque(maxlen=5000)
         self._throughput: Counter[datetime] = Counter()
         self._error_codes: Counter[str] = Counter()
@@ -417,13 +537,18 @@ class MetricAggregator:
             self._throughput[minute] += 1
             if event_type == "request_status":
                 status = str(payload.get("current_status", "processing")).lower()
-                self._status_counts[status] += 1
+                request_id = str(payload.get("request_id", "")).strip()
+                if request_id:
+                    self._status_by_request_id[request_id] = status
                 self._writes_by_table.update(
                     [
                         "request_status_by_id",
                         "requests_by_day",
                         "requests_by_status_window",
                         "requests_by_user_window",
+                        "requests_by_protein_window",
+                        "request_proteins_by_request",
+                        "protein_requests_by_protein",
                         "request_timeline_by_id",
                     ]
                 )
@@ -434,6 +559,8 @@ class MetricAggregator:
                     [
                         "latest_prediction_by_protein",
                         "prediction_history_by_protein",
+                        "request_proteins_by_request",
+                        "protein_requests_by_protein",
                         "request_timeline_by_id",
                     ]
                 )
@@ -463,7 +590,7 @@ class MetricAggregator:
             "avg_latency_ms": avg,
             "p95_latency_ms": p95,
             "throughput": recent_minutes,
-            "status_counts": dict(self._status_counts),
+            "status_counts": dict(Counter(self._status_by_request_id.values())),
             "error_codes": dict(self._error_codes.most_common(8)),
             "cassandra": {
                 "write_tables": dict(self._writes_by_table),
@@ -472,6 +599,9 @@ class MetricAggregator:
                     "requests_by_day",
                     "requests_by_status_window",
                     "requests_by_user_window",
+                    "requests_by_protein_window",
+                    "request_proteins_by_request",
+                    "protein_requests_by_protein",
                     "prediction_history_by_protein",
                     "pipeline_metrics_by_window",
                 ],

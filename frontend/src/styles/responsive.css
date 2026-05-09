@@ -35,7 +35,10 @@
   .admin-grid,
   .label-result-grid,
   .prediction-highlight,
-  .prediction-summary {
+  .prediction-summary,
+  .prediction-result-summary,
+  .prediction-empty-panel,
+  .request-input-overview {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -105,6 +108,9 @@
   .label-result-details,
     .prediction-highlight,
     .prediction-summary,
+    .prediction-result-summary,
+    .prediction-empty-panel,
+    .request-input-overview,
     .solution-result-grid,
     .form-row,
     .detail-grid,

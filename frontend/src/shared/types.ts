@@ -69,6 +69,12 @@ export interface RequestInput {
   protein_id: string
   sequence?: string | null
   sequence_length?: number | null
+  records?: Array<{
+    protein_id: string
+    sequence?: string | null
+    sequence_length?: number | null
+    description?: string | null
+  }> | null
   source?: string | null
   metadata?: Record<string, unknown> | null
 }
@@ -77,6 +83,7 @@ export interface RequestResult {
   request: InferenceRequest
   input?: RequestInput | null
   prediction?: LatestPrediction | null
+  protein_results?: LatestPrediction[]
   server_result?: Record<string, unknown> | null
   stream_events?: Array<{
     eventType: string
@@ -188,8 +195,13 @@ export interface RetryRequestResponse {
 }
 
 export interface CreateInferenceRequestPayload {
-  protein_id: string
-  sequence: string
+  protein_id?: string | null
+  sequence?: string | null
+  records?: Array<{
+    id: string
+    sequence: string
+    description?: string | null
+  }>
   source: string
   model?: 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm'
   top_k?: number | null

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import hashlib
 import hmac
 import json
@@ -30,10 +31,14 @@ from apps.serving_api.src.cafa6_client import (
     Cafa6ValidationError,
     build_confidence_summary,
     map_prediction_row,
+    normalize_sequence,
     stream_cafa6_analysis,
+    stream_cafa6_analysis_records,
+    validate_sequence,
 )
 from libs.protein_rt.cassandra_store import CassandraStore
 from libs.protein_rt.config import CassandraConfig, RabbitMQConfig
+from libs.protein_rt.postgres_store import PostgresStore
 from libs.protein_rt.rabbitmq import RabbitMQPublisher
 
 JWT_ALGORITHM = "HS256"
@@ -42,6 +47,9 @@ JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", "3600"))
 APP_TIMEZONE = timezone(timedelta(hours=7))
 
 Role = str
+MAX_FASTA_RECORDS_PER_REQUEST = 400
+MODAL_RECORDS_PER_REQUEST = 100
+MAX_PARALLEL_MODAL_REQUESTS = 4
 
 
 class LoginRequest(BaseModel):
@@ -79,9 +87,15 @@ class LoginResponse(BaseModel):
     user: UserPublic
 
 
-class CreateInferenceRequestPayload(BaseModel):
-    protein_id: str
+class CreateInferenceRecord(BaseModel):
+    id: str
     sequence: str
+    description: str | None = None
+
+class CreateInferenceRequestPayload(BaseModel):
+    protein_id: str | None = None
+    sequence: str | None = None
+    records: list[CreateInferenceRecord] | None = None
     source: str
     model: str = "ensemble"
     top_k: int | None = None
@@ -89,10 +103,17 @@ class CreateInferenceRequestPayload(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class RequestInputRecord(BaseModel):
+    protein_id: str
+    sequence: str | None = None
+    sequence_length: int | None = None
+    description: str | None = None
+
 class RequestInput(BaseModel):
     protein_id: str
     sequence: str | None = None
     sequence_length: int | None = None
+    records: list[RequestInputRecord] | None = None
     source: str | None = None
     metadata: dict[str, Any] | None = None
 
@@ -144,6 +165,7 @@ class RequestResult(BaseModel):
     request: InferenceRequest
     input: RequestInput | None = None
     prediction: LatestPrediction | None = None
+    protein_results: list[LatestPrediction] = []
     server_result: dict[str, Any] | None = None
     stream_events: list[RequestStreamEvent] = []
 
@@ -237,6 +259,20 @@ class RetryRequestResponse(BaseModel):
     request: InferenceRequest
     retry_count: int
     updated_at: str
+
+class ModelRegistryPayload(BaseModel):
+    model_version: str
+    model_name: str
+    artifact_uri: str | None = None
+    status: str = "draft"
+    config: dict[str, Any] | None = None
+
+class ReplayCampaignPayload(BaseModel):
+    replay_id: str
+    dataset_id: str | None = None
+    rate_per_second: int = 10
+    status: str = "planned"
+    config: dict[str, Any] | None = None
 
 security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
@@ -389,6 +425,7 @@ REQUEST_LATENCIES_MS: dict[str, int] = {}
 REQUEST_STREAM_EVENTS: dict[str, list[RequestStreamEvent]] = {}
 KAFKA_PRODUCER: Any | None = None
 CASSANDRA_READER: Any | None = None
+DIRECT_CASSANDRA_WRITER: Any | None = None
 
 
 class SseBroadcaster:
@@ -498,12 +535,33 @@ class CassandraReader:
         return None
 
     def list_requests_by_protein(self, protein_id: str, limit: int) -> list[dict[str, Any]]:
+        relation_rows = self._session.execute(
+            """
+            SELECT * FROM protein_requests_by_protein
+            WHERE protein_id = %s LIMIT %s
+            """,
+            (protein_id, limit),
+        )
+        relation_items = [row_to_dict(row) for row in relation_rows]
+        if relation_items:
+            return relation_items
+
         rows = self._session.execute(
             """
             SELECT * FROM requests_by_protein_window
             WHERE protein_bucket = %s LIMIT %s
             """,
             (protein_id.lower(), limit),
+        )
+        return [row_to_dict(row) for row in rows]
+
+    def list_proteins_by_request(self, request_id: str) -> list[dict[str, Any]]:
+        rows = self._session.execute(
+            """
+            SELECT * FROM request_proteins_by_request
+            WHERE request_id = %s
+            """,
+            (request_id,),
         )
         return [row_to_dict(row) for row in rows]
 
@@ -514,6 +572,8 @@ class CassandraReader:
             "requests_by_status_window",
             "requests_by_user_window",
             "requests_by_protein_window",
+            "request_proteins_by_request",
+            "protein_requests_by_protein",
             "request_timeline_by_id",
             "latest_prediction_by_protein",
             "prediction_history_by_protein",
@@ -682,6 +742,31 @@ def get_cassandra_reader() -> CassandraReader | None:
         CASSANDRA_READER = None
     return CASSANDRA_READER
 
+def get_direct_cassandra_writer() -> Any | None:
+    global DIRECT_CASSANDRA_WRITER
+    if DIRECT_CASSANDRA_WRITER is not None:
+        return DIRECT_CASSANDRA_WRITER
+    try:
+        from apps.notification_service.src.main import CassandraSettings, CassandraWriter
+
+        DIRECT_CASSANDRA_WRITER = CassandraWriter(CassandraSettings())
+    except Exception:
+        DIRECT_CASSANDRA_WRITER = None
+    return DIRECT_CASSANDRA_WRITER
+
+def persist_serving_event(event_type: str, payload: dict[str, Any]) -> None:
+    writer = get_direct_cassandra_writer()
+    if writer is None:
+        return
+    try:
+        if event_type == "request_status":
+            writer.write_request_status(payload)
+        elif event_type == "prediction_result":
+            writer.write_prediction(payload)
+            writer.write_request_status({**payload, "current_status": "completed"})
+    except Exception:
+        pass
+
 
 def get_kafka_producer() -> Any | None:
     global KAFKA_PRODUCER
@@ -847,6 +932,15 @@ def publish_admin_users() -> None:
     )
 
 
+def with_postgres_store() -> PostgresStore:
+    try:
+        return PostgresStore()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"PostgreSQL metadata store is unavailable: {exc}",
+        ) from exc
+
 def get_current_token_payload(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict[str, Any]:
@@ -921,6 +1015,120 @@ def is_today(iso_timestamp: str) -> bool:
     return parse_iso_datetime(iso_timestamp).date() == app_now().date()
 
 
+def request_timestamp(request: InferenceRequest) -> datetime:
+    for value in (request.updated_at, request.created_at):
+        if not value:
+            continue
+        try:
+            return parse_iso_datetime(value)
+        except ValueError:
+            continue
+    return datetime.min.replace(tzinfo=APP_TIMEZONE)
+
+def latest_requests_by_id(requests: list[InferenceRequest]) -> list[InferenceRequest]:
+    latest: dict[str, InferenceRequest] = {}
+    for request in requests:
+        current = latest.get(request.request_id)
+        if current is None or request_timestamp(request) >= request_timestamp(current):
+            latest[request.request_id] = request
+    return sorted(latest.values(), key=request_timestamp, reverse=True)
+
+def request_records_from_payload(
+    payload: CreateInferenceRequestPayload,
+) -> list[RequestInputRecord]:
+    source_records = payload.records or []
+    if not source_records and payload.protein_id is not None and payload.sequence is not None:
+        source_records = [
+            CreateInferenceRecord(id=payload.protein_id, sequence=payload.sequence)
+        ]
+
+    records: list[RequestInputRecord] = []
+    seen_ids: set[str] = set()
+    for record in source_records:
+        protein_id = record.id.strip()
+        if not protein_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Each FASTA record must include a protein ID.",
+            )
+        if protein_id.lower() in seen_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Duplicate protein ID in FASTA records: {protein_id}",
+            )
+        sequence = normalize_sequence(record.sequence)
+        try:
+            validate_sequence(sequence)
+        except Cafa6ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{protein_id}: {exc}",
+            ) from exc
+        seen_ids.add(protein_id.lower())
+        records.append(
+            RequestInputRecord(
+                protein_id=protein_id,
+                sequence=sequence,
+                sequence_length=len(sequence),
+                description=record.description,
+            )
+        )
+
+    if not records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least one FASTA record is required.",
+        )
+    if len(records) > MAX_FASTA_RECORDS_PER_REQUEST:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"A request can include at most {MAX_FASTA_RECORDS_PER_REQUEST} "
+                "FASTA records."
+            ),
+        )
+    return records
+
+def batch_protein_label(records: list[RequestInputRecord]) -> str:
+    if len(records) == 1:
+        return records[0].protein_id
+    return f"batch:{len(records)}-proteins"
+
+def prediction_for_request_protein(
+    request_id: str,
+    protein_id: str,
+) -> LatestPrediction | None:
+    for prediction in PREDICTIONS:
+        if (
+            prediction.request_id == request_id
+            and prediction.protein_id.lower() == protein_id.lower()
+        ):
+            return prediction
+    return None
+
+def predictions_for_request(request_id: str) -> list[LatestPrediction]:
+    return sorted(
+        [prediction for prediction in PREDICTIONS if prediction.request_id == request_id],
+        key=lambda item: (item.protein_id.lower(), item.predicted_at),
+    )
+
+def chunk_request_records(
+    records: list[RequestInputRecord],
+    chunk_size: int = MODAL_RECORDS_PER_REQUEST,
+) -> list[list[RequestInputRecord]]:
+    return [records[index:index + chunk_size] for index in range(0, len(records), chunk_size)]
+
+def input_records_payload(records: list[RequestInputRecord]) -> list[dict[str, Any]]:
+    return [
+        {
+            "protein_id": record.protein_id,
+            "sequence": record.sequence,
+            "sequence_length": record.sequence_length,
+            "description": record.description,
+        }
+        for record in records
+    ]
+
 def latest_predictions(limit: int = 10) -> list[LatestPrediction]:
     return sorted(PREDICTIONS, key=lambda item: item.predicted_at, reverse=True)[:limit]
 
@@ -965,20 +1173,52 @@ def input_from_event_payload(payload: dict[str, Any]) -> RequestInput | None:
     if not protein_id:
         return None
 
+    input_records_payload = payload.get("input_records")
+    input_records: list[RequestInputRecord] = []
+    if isinstance(input_records_payload, list):
+        for item in input_records_payload:
+            if not isinstance(item, dict):
+                continue
+            record_id = item.get("protein_id") or item.get("id")
+            if not record_id:
+                continue
+            sequence_value = item.get("sequence")
+            sequence_text = str(sequence_value) if sequence_value is not None else None
+            sequence_length = item.get("sequence_length")
+            input_records.append(
+                RequestInputRecord(
+                    protein_id=str(record_id),
+                    sequence=sequence_text,
+                    sequence_length=(
+                        int(sequence_length)
+                        if sequence_length is not None
+                        else len(sequence_text)
+                        if sequence_text is not None
+                        else None
+                    ),
+                    description=(
+                        str(item["description"])
+                        if item.get("description") is not None
+                        else None
+                    ),
+                )
+            )
+
     sequence = payload.get("sequence")
     sequence_text = str(sequence) if sequence is not None else None
     metadata = payload.get("metadata")
 
     return RequestInput(
         protein_id=str(protein_id),
-        sequence=sequence_text,
+        sequence=sequence_text if not input_records else None,
         sequence_length=(
             len(sequence_text)
-            if sequence_text is not None
+            if sequence_text is not None and not input_records
             else int(payload["sequence_length"])
-            if payload.get("sequence_length") is not None
+            if payload.get("sequence_length") is not None and not input_records
             else None
         ),
+        records=input_records or None,
         source=str(payload["source"]) if payload.get("source") is not None else None,
         metadata=metadata if isinstance(metadata, dict) else None,
     )
@@ -988,6 +1228,39 @@ def cassandra_input_for_request(request: InferenceRequest) -> RequestInput | Non
     reader = get_cassandra_reader()
     if not reader:
         return None
+
+    try:
+        protein_rows = reader.list_proteins_by_request(request.request_id)
+        if protein_rows:
+            records = [
+                RequestInputRecord(
+                    protein_id=str(row.get("protein_id", "")),
+                    sequence=None,
+                    sequence_length=(
+                        int(row["sequence_length"])
+                        if row.get("sequence_length") is not None
+                        else None
+                    ),
+                    description=(
+                        str(row["description"])
+                        if row.get("description") is not None
+                        else None
+                    ),
+                )
+                for row in protein_rows
+                if row.get("protein_id")
+            ]
+            if records:
+                return RequestInput(
+                    protein_id=records[0].protein_id if len(records) == 1 else f"{len(records)} proteins",
+                    sequence=None,
+                    sequence_length=records[0].sequence_length if len(records) == 1 else None,
+                    records=records,
+                    source=str(protein_rows[0].get("source")) if protein_rows[0].get("source") else request.source,
+                    metadata={"protein_count": len(records), "cassandra_relation": "request_proteins_by_request"},
+                )
+    except Exception:
+        pass
 
     try:
         for event in reader.request_timeline(request.request_id):
@@ -1180,13 +1453,16 @@ def prediction_from_event_payload(payload: dict[str, Any]) -> LatestPrediction |
 
 
 def prediction_from_history_row(row: dict[str, Any]) -> LatestPrediction:
-    top_terms_payload = row.get("top_terms") or []
+    top_terms_payload = row.get("top_terms") or row.get("predicted_terms") or []
     top_scores_payload = row.get("top_scores") or []
+    score_map = row.get("score_map") or {}
     top_terms: list[PredictionTerm] = []
     if isinstance(top_terms_payload, list):
         for index, term_id in enumerate(top_terms_payload):
             score = 0.0
-            if isinstance(top_scores_payload, list) and index < len(top_scores_payload):
+            if isinstance(score_map, dict) and term_id in score_map:
+                score = float(score_map[term_id])
+            elif isinstance(top_scores_payload, list) and index < len(top_scores_payload):
                 score = float(top_scores_payload[index])
             top_terms.append(enrich_prediction_term(PredictionTerm(term_id=str(term_id), score=score)))
 
@@ -1203,6 +1479,85 @@ def prediction_from_history_row(row: dict[str, Any]) -> LatestPrediction:
         ),
         server_result=None,
     )
+
+def cassandra_prediction_for_request_protein(
+    request_id: str,
+    protein_id: str,
+) -> LatestPrediction | None:
+    reader = get_cassandra_reader()
+    if not reader:
+        return None
+    try:
+        for row in reader.prediction_history_by_protein(protein_id, limit=50):
+            if str(row.get("request_id")) == request_id:
+                return prediction_from_history_row(row)
+    except Exception:
+        return None
+    return None
+
+def request_protein_predictions_from_cassandra(
+    request_id: str,
+    request_input: RequestInput | None,
+) -> list[LatestPrediction]:
+    if not request_input:
+        return []
+    protein_ids = [
+        record.protein_id
+        for record in (request_input.records or [])
+    ] or [request_input.protein_id]
+    predictions: list[LatestPrediction] = []
+    seen: set[str] = set()
+    for protein_id in protein_ids:
+        if protein_id.lower() in seen:
+            continue
+        prediction = cassandra_prediction_for_request_protein(request_id, protein_id)
+        if prediction:
+            predictions.append(prediction)
+            seen.add(protein_id.lower())
+    return predictions
+
+def request_protein_predictions_from_timeline(request_id: str) -> list[LatestPrediction]:
+    predictions: list[LatestPrediction] = []
+    seen: set[str] = set()
+    for event in request_stream_events_from_cassandra(request_id):
+        protein_results = event.payload.get("protein_results")
+        if not isinstance(protein_results, list):
+            continue
+        for item in protein_results:
+            if not isinstance(item, dict):
+                continue
+            prediction = prediction_from_event_payload({
+                **item,
+                "request_id": item.get("request_id") or request_id,
+            })
+            if prediction and prediction.protein_id.lower() not in seen:
+                predictions.append(prediction)
+                seen.add(prediction.protein_id.lower())
+    return sorted(predictions, key=lambda item: item.protein_id.lower())
+
+def request_stream_events_from_cassandra(request_id: str) -> list[RequestStreamEvent]:
+    reader = get_cassandra_reader()
+    if not reader:
+        return []
+    events: list[RequestStreamEvent] = []
+    try:
+        for row in reader.request_timeline(request_id):
+            payload: dict[str, Any] = {}
+            raw_payload = row.get("payload")
+            if raw_payload:
+                parsed_payload = json.loads(str(raw_payload))
+                if isinstance(parsed_payload, dict):
+                    payload = parsed_payload
+            events.append(
+                RequestStreamEvent(
+                    eventType=str(row.get("event_type") or payload.get("event_type") or "request_status"),
+                    payload=payload,
+                    receivedAt=str(row.get("event_ts") or payload.get("event_ts") or app_now().isoformat()),
+                )
+            )
+    except Exception:
+        return []
+    return events
 
 
 def map_aspect_value(aspect: Any) -> str | None:
@@ -1418,7 +1773,10 @@ def upsert_memory_request(request: InferenceRequest) -> None:
 
 def upsert_memory_prediction(prediction: LatestPrediction) -> None:
     for index, item in enumerate(PREDICTIONS):
-        if item.request_id == prediction.request_id:
+        if (
+            item.request_id == prediction.request_id
+            and item.protein_id.lower() == prediction.protein_id.lower()
+        ):
             PREDICTIONS[index] = prediction
             return
     PREDICTIONS.insert(0, prediction)
@@ -1459,6 +1817,7 @@ def publish_request_status(
     )
     if extra_payload and extra_payload.get("modal_event"):
         append_request_stream_event(request.request_id, "request_status", event_payload)
+    persist_serving_event("request_status", event_payload)
     publish_pipeline_event(
         os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
         request.request_id,
@@ -1507,18 +1866,20 @@ def publish_prediction_result(
     metadata: dict[str, Any] | None,
     latency_ms: int,
 ) -> None:
+    event_payload = build_prediction_event(
+        request=request,
+        prediction=prediction,
+        username=username,
+        source=source,
+        sequence=sequence,
+        metadata=metadata,
+        latency_ms=latency_ms,
+    )
+    persist_serving_event("prediction_result", event_payload)
     publish_pipeline_event(
         os.getenv("KAFKA_PREDICTION_TOPIC", "prediction_result"),
         request.request_id,
-        build_prediction_event(
-            request=request,
-            prediction=prediction,
-            username=username,
-            source=source,
-            sequence=sequence,
-            metadata=metadata,
-            latency_ms=latency_ms,
-        ),
+        event_payload,
     )
 
 
@@ -1628,6 +1989,186 @@ def complete_request_from_analysis(
     return completed
 
 
+def complete_batch_request_from_stream(
+    request_id: str,
+    protein_label: str,
+    records: list[RequestInputRecord],
+    username: str,
+    source: str,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+    latest_batch: dict[str, Any],
+    latency_ms: int,
+    retry_count: int = 0,
+) -> InferenceRequest:
+    completed = InferenceRequest(
+        request_id=request_id,
+        protein_id=protein_label,
+        username=username,
+        source=source,
+        created_at=created_at,
+        updated_at=app_now().isoformat(),
+        current_status="completed",
+        stage_name="prediction_written",
+        retry_count=retry_count,
+        model_version="cafa6-modal-ensemble",
+        feature_version="cafa6-modal-streaming-v1",
+    )
+    REQUEST_LATENCIES_MS[request_id] = latency_ms
+
+    predictions: list[LatestPrediction] = []
+    for record in records:
+        if not record.sequence:
+            continue
+        analysis = analysis_from_stream_batch(
+            protein_id=record.protein_id,
+            sequence=record.sequence,
+            batch=latest_batch,
+            latency_ms=latency_ms,
+        )
+        completed.model_version = analysis.model_version
+        completed.feature_version = analysis.feature_version
+        prediction = LatestPrediction(
+            protein_id=record.protein_id,
+            request_id=request_id,
+            predicted_at=completed.updated_at or app_now().isoformat(),
+            model_version=analysis.model_version,
+            top_terms=[
+                enrich_prediction_term(
+                    PredictionTerm(
+                        term_id=term.term_id,
+                        term_name=term.term_name,
+                        ontology=term.ontology,
+                        score=term.score,
+                    )
+                )
+                for term in analysis.top_terms
+            ],
+            confidence_summary=analysis.confidence_summary,
+            server_result=analysis.server_result,
+        )
+        upsert_memory_prediction(prediction)
+        predictions.append(prediction)
+        publish_prediction_result(
+            InferenceRequest(**{**completed.model_dump(), "protein_id": record.protein_id}),
+            prediction,
+            username=username,
+            source=source,
+            sequence=record.sequence,
+            metadata=metadata,
+            latency_ms=latency_ms,
+        )
+
+    upsert_memory_request(completed)
+    publish_request_status(
+        completed,
+        username=username,
+        source=source,
+        sequence="\n".join(record.sequence or "" for record in records),
+        metadata={**(metadata or {}), "protein_count": len(records)},
+        latency_ms=latency_ms,
+        extra_payload={
+            "modal_event": "prediction_result",
+            "modal_data": latest_batch,
+            "protein_results": [prediction.model_dump() for prediction in predictions],
+        },
+    )
+    return completed
+
+def complete_batch_request_from_chunk_results(
+    request_id: str,
+    protein_label: str,
+    chunk_results: list[tuple[list[RequestInputRecord], dict[str, Any], int]],
+    username: str,
+    source: str,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+    retry_count: int = 0,
+) -> InferenceRequest:
+    completed = InferenceRequest(
+        request_id=request_id,
+        protein_id=protein_label,
+        username=username,
+        source=source,
+        created_at=created_at,
+        updated_at=app_now().isoformat(),
+        current_status="completed",
+        stage_name="prediction_written",
+        retry_count=retry_count,
+        model_version="cafa6-modal-ensemble",
+        feature_version="cafa6-modal-streaming-v1",
+    )
+    REQUEST_LATENCIES_MS[request_id] = max(
+        (latency_ms for _, _, latency_ms in chunk_results),
+        default=0,
+    )
+
+    predictions: list[LatestPrediction] = []
+    for chunk_records, latest_batch, latency_ms in chunk_results:
+        for record in chunk_records:
+            if not record.sequence:
+                continue
+            analysis = analysis_from_stream_batch(
+                protein_id=record.protein_id,
+                sequence=record.sequence,
+                batch=latest_batch,
+                latency_ms=latency_ms,
+            )
+            completed.model_version = analysis.model_version
+            completed.feature_version = analysis.feature_version
+            prediction = LatestPrediction(
+                protein_id=record.protein_id,
+                request_id=request_id,
+                predicted_at=completed.updated_at or app_now().isoformat(),
+                model_version=analysis.model_version,
+                top_terms=[
+                    enrich_prediction_term(
+                        PredictionTerm(
+                            term_id=term.term_id,
+                            term_name=term.term_name,
+                            ontology=term.ontology,
+                            score=term.score,
+                        )
+                    )
+                    for term in analysis.top_terms
+                ],
+                confidence_summary=analysis.confidence_summary,
+                server_result=analysis.server_result,
+            )
+            upsert_memory_prediction(prediction)
+            predictions.append(prediction)
+            publish_prediction_result(
+                InferenceRequest(**{**completed.model_dump(), "protein_id": record.protein_id}),
+                prediction,
+                username=username,
+                source=source,
+                sequence=record.sequence,
+                metadata=metadata,
+                latency_ms=latency_ms,
+            )
+
+    protein_count = sum(len(chunk_records) for chunk_records, _, _ in chunk_results)
+    upsert_memory_request(completed)
+    publish_request_status(
+        completed,
+        username=username,
+        source=source,
+        sequence="",
+        metadata={
+            **(metadata or {}),
+            "protein_count": protein_count,
+            "modal_chunk_count": len(chunk_results),
+            "modal_chunk_size": MODAL_RECORDS_PER_REQUEST,
+        },
+        latency_ms=REQUEST_LATENCIES_MS[request_id],
+        extra_payload={
+            "modal_event": "prediction_result",
+            "protein_result_count": len(predictions),
+            "modal_chunk_count": len(chunk_results),
+        },
+    )
+    return completed
+
 def fail_request(
     request_id: str,
     protein_id: str,
@@ -1683,6 +2224,106 @@ def fail_request(
     return failed
 
 
+def process_cafa6_stream_chunk(
+    request_id: str,
+    protein_id: str,
+    username: str,
+    source: str,
+    sequence: str,
+    model_name: str,
+    top_k: int | None,
+    threshold: float | None,
+    metadata: dict[str, Any] | None,
+    created_at: str,
+    retry_count: int,
+    chunk_records: list[RequestInputRecord],
+    chunk_index: int,
+    total_chunks: int,
+) -> tuple[list[RequestInputRecord], dict[str, Any], int]:
+    latest_batch: dict[str, Any] | None = None
+    latest_latency_ms = 0
+    record_payloads = [
+        {"id": record.protein_id, "sequence": record.sequence or ""}
+        for record in chunk_records
+    ]
+
+    for stream_event in stream_cafa6_analysis_records(
+        records=record_payloads,
+        model_name=model_name,
+        top_k=top_k,
+        threshold=threshold,
+    ):
+        latest_latency_ms = stream_event.elapsed_ms
+        event_model_name = model_name
+        if stream_event.event == "start":
+            event_model_name = str(stream_event.data.get("model", model_name))
+            stage_name = "modal_stream_started"
+        elif stream_event.event == "progress":
+            stage_name = f"modal_{stream_event.data.get('step', 'modal_progress')}"
+            event_model_name = str(stream_event.data.get("model", model_name))
+        elif stream_event.event == "batch":
+            latest_batch = stream_event.data
+            batch_model = stream_event.data.get("model")
+            if isinstance(batch_model, dict) and batch_model.get("name"):
+                event_model_name = str(batch_model["name"])
+            stage_name = (
+                f"modal_chunk_{chunk_index + 1}_batch_"
+                f"{stream_event.data.get('batch_index', 0)}"
+            )
+        elif stream_event.event == "done":
+            event_model_name = str(stream_event.data.get("model", model_name))
+            stage_name = f"modal_chunk_{chunk_index + 1}_done"
+        elif stream_event.event == "error":
+            raise Cafa6AnalysisError(
+                str(stream_event.data.get("message", "Streaming inference failed."))
+            )
+        else:
+            stage_name = f"modal_{stream_event.event}"
+
+        streaming = InferenceRequest(
+            request_id=request_id,
+            protein_id=protein_id,
+            username=username,
+            source=source,
+            created_at=created_at,
+            updated_at=app_now().isoformat(),
+            current_status="processing",
+            stage_name=stage_name,
+            retry_count=retry_count,
+            model_version=f"cafa6-modal-{event_model_name}",
+            feature_version="cafa6-modal-streaming-v1",
+        )
+        upsert_memory_request(streaming)
+        modal_event_name = (
+            "chunk_done" if stream_event.event == "done" and total_chunks > 1
+            else stream_event.event
+        )
+        publish_request_status(
+            streaming,
+            username=username,
+            source=source,
+            sequence=sequence,
+            metadata=metadata,
+            latency_ms=stream_event.elapsed_ms,
+            extra_payload={
+                "modal_event": modal_event_name,
+                "modal_step": stream_event.data.get("step"),
+                "modal_step_status": stream_event.data.get("status"),
+                "modal_data": {
+                    **stream_event.data,
+                    "chunk_index": chunk_index,
+                    "chunk_number": chunk_index + 1,
+                    "total_chunks": total_chunks,
+                    "chunk_size": len(chunk_records),
+                    "chunk_event": stream_event.event,
+                },
+            },
+        )
+
+    if latest_batch is None:
+        raise Cafa6AnalysisError("CAFA-6 streaming endpoint returned no batch events.")
+    return chunk_records, latest_batch, latest_latency_ms
+
 def process_cafa6_streaming_request(
     request_id: str,
     protein_id: str,
@@ -1695,6 +2336,7 @@ def process_cafa6_streaming_request(
     metadata: dict[str, Any] | None,
     created_at: str,
     retry_count: int = 0,
+    records: list[RequestInputRecord] | None = None,
 ) -> None:
     try:
         connecting = InferenceRequest(
@@ -1715,13 +2357,72 @@ def process_cafa6_streaming_request(
             source=source,
             sequence=sequence,
             metadata=metadata,
+            extra_payload=(
+                {
+                    "modal_event": "input_records",
+                    "input_records": input_records_payload(records),
+                }
+                if records
+                else None
+            ),
         )
 
         latest_batch: dict[str, Any] | None = None
         latest_latency_ms = 0
-        for stream_event in stream_cafa6_analysis(
-            protein_id=protein_id,
-            sequence=sequence,
+        stream_records = records or [
+            RequestInputRecord(
+                protein_id=protein_id,
+                sequence=sequence,
+                sequence_length=len(sequence),
+            )
+        ]
+        record_payloads = [
+            {"id": record.protein_id, "sequence": record.sequence or ""}
+            for record in stream_records
+        ]
+        if len(stream_records) > MODAL_RECORDS_PER_REQUEST:
+            record_chunks = chunk_request_records(stream_records)
+            chunk_results: list[tuple[list[RequestInputRecord], dict[str, Any], int]] = []
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(MAX_PARALLEL_MODAL_REQUESTS, len(record_chunks)),
+            ) as executor:
+                future_results = [
+                    executor.submit(
+                        process_cafa6_stream_chunk,
+                        request_id=request_id,
+                        protein_id=protein_id,
+                        username=username,
+                        source=source,
+                        sequence=sequence,
+                        model_name=model_name,
+                        top_k=top_k,
+                        threshold=threshold,
+                        metadata=metadata,
+                        created_at=created_at,
+                        retry_count=retry_count,
+                        chunk_records=chunk,
+                        chunk_index=index,
+                        total_chunks=len(record_chunks),
+                    )
+                    for index, chunk in enumerate(record_chunks)
+                ]
+                for future in concurrent.futures.as_completed(future_results):
+                    chunk_results.append(future.result())
+            chunk_results.sort(key=lambda result: stream_records.index(result[0][0]))
+            complete_batch_request_from_chunk_results(
+                request_id=request_id,
+                protein_label=protein_id,
+                chunk_results=chunk_results,
+                username=username,
+                source=source,
+                metadata=metadata,
+                created_at=created_at,
+                retry_count=retry_count,
+            )
+            return
+
+        for stream_event in stream_cafa6_analysis_records(
+            records=record_payloads,
             model_name=model_name,
             top_k=top_k,
             threshold=threshold,
@@ -1866,23 +2567,37 @@ def process_cafa6_streaming_request(
         if latest_batch is None:
             raise Cafa6AnalysisError("CAFA-6 streaming endpoint returned no batch events.")
 
-        analysis = analysis_from_stream_batch(
-            protein_id=protein_id,
-            sequence=sequence,
-            batch=latest_batch,
-            latency_ms=latest_latency_ms,
-        )
-        complete_request_from_analysis(
-            request_id=request_id,
-            protein_id=protein_id,
-            username=username,
-            source=source,
-            sequence=sequence,
-            metadata=metadata,
-            created_at=created_at,
-            analysis=analysis,
-            retry_count=retry_count,
-        )
+        if len(stream_records) > 1:
+            complete_batch_request_from_stream(
+                request_id=request_id,
+                protein_label=protein_id,
+                records=stream_records,
+                username=username,
+                source=source,
+                metadata=metadata,
+                created_at=created_at,
+                latest_batch=latest_batch,
+                latency_ms=latest_latency_ms,
+                retry_count=retry_count,
+            )
+        else:
+            analysis = analysis_from_stream_batch(
+                protein_id=protein_id,
+                sequence=sequence,
+                batch=latest_batch,
+                latency_ms=latest_latency_ms,
+            )
+            complete_request_from_analysis(
+                request_id=request_id,
+                protein_id=protein_id,
+                username=username,
+                source=source,
+                sequence=sequence,
+                metadata=metadata,
+                created_at=created_at,
+                analysis=analysis,
+                retry_count=retry_count,
+            )
     except Cafa6ValidationError as exc:
         fail_request(
             request_id,
@@ -2036,6 +2751,90 @@ def delete_admin_user(
     return build_admin_user_list()
 
 
+@app.get("/api/admin/models")
+def list_model_registry(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: UserPublic = Depends(require_roles("admin")),
+) -> list[dict[str, Any]]:
+    store = with_postgres_store()
+    try:
+        return serialize_value(store.list_models(limit))
+    finally:
+        store.close()
+
+@app.put("/api/admin/models/{model_version}")
+def upsert_model_registry(
+    model_version: str,
+    payload: ModelRegistryPayload,
+    current_user: UserPublic = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    if payload.model_version != model_version:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="model_version in path and body must match",
+        )
+    store = with_postgres_store()
+    try:
+        row = store.upsert_model(
+            model_version=payload.model_version,
+            model_name=payload.model_name,
+            artifact_uri=payload.artifact_uri,
+            status=payload.status,
+            config=payload.config or {},
+        )
+        store.audit(
+            actor=current_user.username,
+            action="upsert_model",
+            target_type="model_registry",
+            target_id=payload.model_version,
+            detail=payload.model_dump(),
+        )
+        return serialize_value(row)
+    finally:
+        store.close()
+
+@app.get("/api/admin/replay-campaigns")
+def list_replay_campaigns(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: UserPublic = Depends(require_roles("admin")),
+) -> list[dict[str, Any]]:
+    store = with_postgres_store()
+    try:
+        return serialize_value(store.list_replay_campaigns(limit))
+    finally:
+        store.close()
+
+@app.put("/api/admin/replay-campaigns/{replay_id}")
+def upsert_replay_campaign(
+    replay_id: str,
+    payload: ReplayCampaignPayload,
+    current_user: UserPublic = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    if payload.replay_id != replay_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="replay_id in path and body must match",
+        )
+    store = with_postgres_store()
+    try:
+        row = store.upsert_replay_campaign(
+            replay_id=payload.replay_id,
+            dataset_id=payload.dataset_id,
+            rate_per_second=payload.rate_per_second,
+            status=payload.status,
+            config=payload.config or {},
+        )
+        store.audit(
+            actor=current_user.username,
+            action="upsert_replay_campaign",
+            target_type="replay_campaign",
+            target_id=payload.replay_id,
+            detail=payload.model_dump(),
+        )
+        return serialize_value(row)
+    finally:
+        store.close()
+
 @app.get("/api/metrics/pipeline/summary", response_model=DashboardSummary)
 def get_pipeline_summary(
     window: str = Query(default="minute"),
@@ -2062,6 +2861,7 @@ def get_pipeline_summary(
         summary_requests = [
             request for request in summary_requests if request.username == current_user.username
         ]
+    summary_requests = latest_requests_by_id(summary_requests)
     status_counts = {
         "pending": 0,
         "processing": 0,
@@ -2075,7 +2875,11 @@ def get_pipeline_summary(
             status_counts.get(request.current_status, 0) + 1
         )
 
-    total_today = sum(1 for request in summary_requests if is_today(request.created_at))
+    total_today = sum(
+        1
+        for request in summary_requests
+        if request_timestamp(request).date() == app_now().date()
+    )
     failed_count = status_counts.get("failed", 0)
     error_rate = failed_count / len(summary_requests) if summary_requests else 0
     avg_latency_ms, p95_latency_ms = calculate_latency_ms()
@@ -2109,6 +2913,8 @@ def get_pipeline_summary(
             "requests_by_status_window",
             "requests_by_user_window",
             "requests_by_protein_window",
+            "request_proteins_by_request",
+            "protein_requests_by_protein",
             "request_timeline_by_id",
             "prediction_history_by_protein",
             "pipeline_metrics_by_window",
@@ -2119,6 +2925,8 @@ def get_pipeline_summary(
             "requests_by_status_window": total_today,
             "requests_by_user_window": total_today,
             "requests_by_protein_window": total_today,
+            "request_proteins_by_request": total_today,
+            "protein_requests_by_protein": total_today,
             "request_timeline_by_id": total_today,
         },
         kafka_topics=[
@@ -2141,13 +2949,9 @@ def create_inference_request(
 ) -> InferenceRequest:
     request_id = f"api-{uuid.uuid4()}"
     created_at = app_now().isoformat()
-    protein_id = payload.protein_id.strip()
+    records = request_records_from_payload(payload)
+    protein_id = batch_protein_label(records)
 
-    if not protein_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="protein_id is required",
-        )
     model_name = payload.model.strip().lower() or "ensemble"
     if model_name not in {"ensemble", "esm_mlp", "protcnn", "bilstm"}:
         raise HTTPException(
@@ -2176,18 +2980,22 @@ def create_inference_request(
         stage_name="accepted",
         retry_count=0,
     )
-    normalized_sequence = "".join(payload.sequence.upper().split())
+    normalized_sequence = records[0].sequence or ""
+    combined_sequence = "\n".join(record.sequence or "" for record in records)
+    request_metadata = {
+        **(payload.metadata or {}),
+        "model": model_name,
+        "top_k": payload.top_k,
+        "threshold": payload.threshold,
+        "protein_count": len(records),
+    }
     REQUEST_INPUTS[request_id] = RequestInput(
         protein_id=protein_id,
-        sequence=normalized_sequence,
-        sequence_length=len(normalized_sequence),
+        sequence=normalized_sequence if len(records) == 1 else None,
+        sequence_length=len(normalized_sequence) if len(records) == 1 else None,
+        records=records,
         source=payload.source,
-        metadata={
-            **(payload.metadata or {}),
-            "model": model_name,
-            "top_k": payload.top_k,
-            "threshold": payload.threshold,
-        },
+        metadata=request_metadata,
     )
     upsert_memory_request(accepted)
     threading.Thread(
@@ -2197,12 +3005,13 @@ def create_inference_request(
             "protein_id": protein_id,
             "username": current_user.username,
             "source": payload.source,
-            "sequence": normalized_sequence,
+            "sequence": combined_sequence,
             "model_name": model_name,
             "top_k": payload.top_k,
             "threshold": payload.threshold,
-            "metadata": payload.metadata,
+            "metadata": request_metadata,
             "created_at": created_at,
+            "records": records,
         },
         daemon=True,
     ).start()
@@ -2253,8 +3062,19 @@ def get_inference_request_result(
 ) -> RequestResult:
     request = get_inference_request(request_id, current_user)
     request_input = REQUEST_INPUTS.get(request_id) or cassandra_input_for_request(request)
-    prediction = prediction_for_request(request_id) or cassandra_prediction_for_request(request)
-    if prediction and prediction.protein_id.lower() != request.protein_id.lower():
+    protein_results = predictions_for_request(request_id)
+    if not protein_results:
+        protein_results = request_protein_predictions_from_cassandra(request_id, request_input)
+    if not protein_results:
+        protein_results = request_protein_predictions_from_timeline(request_id)
+    prediction = protein_results[0] if protein_results else (
+        prediction_for_request(request_id) or cassandra_prediction_for_request(request)
+    )
+    if (
+        prediction
+        and not protein_results
+        and prediction.protein_id.lower() != request.protein_id.lower()
+    ):
         prediction = None
     if not request_input and prediction:
         request_input = input_from_server_result(request, prediction.server_result)
@@ -2263,10 +3083,45 @@ def get_inference_request_result(
         request=request,
         input=request_input,
         prediction=prediction,
+        protein_results=protein_results or ([prediction] if prediction else []),
         server_result=prediction.server_result if prediction else None,
-        stream_events=REQUEST_STREAM_EVENTS.get(request_id, []),
+        stream_events=REQUEST_STREAM_EVENTS.get(request_id, [])
+        or request_stream_events_from_cassandra(request_id),
     )
 
+
+@app.get(
+    "/api/inference-requests/{request_id}/proteins/{protein_id}/result",
+    response_model=LatestPrediction,
+)
+def get_request_protein_result(
+    request_id: str,
+    protein_id: str,
+    current_user: UserPublic = Depends(require_roles("user", "admin")),
+) -> LatestPrediction:
+    request = get_inference_request(request_id, current_user)
+    prediction = prediction_for_request_protein(request_id, protein_id)
+    if not prediction:
+        prediction = cassandra_prediction_for_request_protein(request_id, protein_id)
+    if not prediction:
+        prediction = next(
+            (
+                item
+                for item in request_protein_predictions_from_timeline(request_id)
+                if item.protein_id.lower() == protein_id.lower()
+            ),
+            None,
+        )
+    if prediction:
+        return prediction
+    if request.protein_id.lower() == protein_id.lower():
+        prediction = prediction_for_request(request_id) or cassandra_prediction_for_request(request)
+        if prediction:
+            return prediction
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Protein result not found for this request.",
+    )
 
 @app.post(
     "/api/inference-requests/{request_id}/retry",
@@ -2315,6 +3170,20 @@ def retry_inference_request(
         metadata=request_input.metadata,
         extra_payload={"retry_requested_by": current_user.username},
     )
+    try:
+        postgres = PostgresStore()
+        try:
+            postgres.audit(
+                actor=current_user.username,
+                action="retry_request",
+                target_type="inference_request",
+                target_id=request_id,
+                detail={"retry_count": retry_count, "protein_id": retrying.protein_id},
+            )
+        finally:
+            postgres.close()
+    except Exception:
+        pass
     publish_retry_command(retrying, request_input, retry_count)
 
     metadata = request_input.metadata or {}
@@ -2373,6 +3242,13 @@ def list_my_requests(
                 if len(rows) >= fetch_limit:
                     break
             requests = [inference_request_from_row(row) for row in rows]
+            memory_items = [
+                request
+                for request in REQUESTS
+                if request.username == current_user.username
+                and request_timestamp(request).date() >= today - timedelta(days=days - 1)
+            ]
+            requests = latest_requests_by_id([*requests, *memory_items])
             requests.sort(
                 key=lambda item: item.updated_at or item.created_at,
                 reverse=True,
@@ -2380,7 +3256,7 @@ def list_my_requests(
             items = requests[start_index:end_index]
             return UserRequestList(
                 items=items,
-                source="cassandra",
+                source="cassandra+memory",
                 limit=page_size,
                 page=page,
                 page_size=page_size,
@@ -2472,6 +3348,18 @@ def list_admin_requests(
                 if len(rows) >= fetch_limit:
                     break
             requests = [inference_request_from_row(row) for row in rows]
+            memory_items = [
+                request
+                for request in REQUESTS
+                if (not status_filter or request.current_status == status_filter.lower())
+                and (not request_date or parse_iso_datetime(request.created_at).date() == request_date)
+                and (not username or request.username == username)
+                and (
+                    request_date is not None
+                    or request_timestamp(request).date() >= app_now().date() - timedelta(days=days - 1)
+                )
+            ]
+            requests = latest_requests_by_id([*requests, *memory_items])
             requests.sort(
                 key=lambda item: item.updated_at or item.created_at,
                 reverse=True,
@@ -2479,7 +3367,7 @@ def list_admin_requests(
             paged_requests = requests[start_index:end_index]
             return AdminRequestList(
                 items=paged_requests,
-                source="cassandra",
+                source="cassandra+memory",
                 limit=page_size,
                 table=table,
                 page=page,

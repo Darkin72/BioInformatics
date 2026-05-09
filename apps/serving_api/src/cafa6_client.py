@@ -114,6 +114,19 @@ def stream_cafa6_analysis(
     top_k: int | None = None,
     threshold: float | None = None,
 ) -> Iterator[Cafa6StreamEvent]:
+    yield from stream_cafa6_analysis_records(
+        records=[{"id": protein_id, "sequence": sequence}],
+        model_name=model_name,
+        top_k=top_k,
+        threshold=threshold,
+    )
+
+def stream_cafa6_analysis_records(
+    records: list[dict[str, str]],
+    model_name: str = "ensemble",
+    top_k: int | None = None,
+    threshold: float | None = None,
+) -> Iterator[Cafa6StreamEvent]:
     """Call the configured Modal SSE endpoint and yield parsed stream events."""
     stream_url = (
         os.getenv("CAFA6_GRAPH_AWARE_PREDICT_SSE_URL", "").strip()
@@ -130,16 +143,20 @@ def stream_cafa6_analysis(
         )
     )
     stream_batch_size = int(os.getenv("CAFA6_STREAM_BATCH_SIZE", "1"))
-    normalized_sequence = normalize_sequence(sequence)
-    validate_sequence(normalized_sequence)
+    normalized_records = []
+    for record in records:
+        protein_id = str(record.get("id", "")).strip()
+        normalized_sequence = normalize_sequence(str(record.get("sequence", "")))
+        if not protein_id:
+            raise Cafa6ValidationError("Protein ID is required.")
+        validate_sequence(normalized_sequence)
+        normalized_records.append({"id": protein_id, "sequence": normalized_sequence})
+
+    if not normalized_records:
+        raise Cafa6ValidationError("At least one FASTA record is required.")
 
     payload = {
-        "records": [
-            {
-                "id": protein_id,
-                "sequence": normalized_sequence,
-            }
-        ],
+        "records": normalized_records,
         "model": model_name,
         "top_k": resolved_top_k,
         "threshold": threshold,

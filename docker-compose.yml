@@ -118,6 +118,33 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  spark-streaming:
+    build:
+      context: .
+      dockerfile: jobs/spark_streaming/Dockerfile
+    container_name: bioinformatics-spark-streaming
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_RAW_INPUT_TOPIC: ${KAFKA_RAW_INPUT_TOPIC:-protein.raw-input.v1}
+      KAFKA_VALIDATED_INPUT_TOPIC: ${KAFKA_VALIDATED_INPUT_TOPIC:-protein.validated-input.v1}
+      KAFKA_PREDICTION_TOPIC: ${KAFKA_PREDICTION_TOPIC:-protein.prediction-result.v1}
+      KAFKA_DEAD_LETTER_TOPIC: ${KAFKA_DEAD_LETTER_TOPIC:-protein.dead-letter.v1}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+      CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-900}
+      CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
+    ports:
+      - "${SPARK_STREAMING_UI_HOST_PORT:-4040}:4040"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    profiles: ["streaming"]
+    restart: unless-stopped
+
   notification-service:
     build:
       context: .

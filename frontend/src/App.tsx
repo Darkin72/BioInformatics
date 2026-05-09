@@ -10,7 +10,10 @@ import {
 import { DashboardPage } from './features/dashboard/DashboardPage'
 import { LatestPredictionPage } from './features/predictions/LatestPredictionPage'
 import { MyRequestsPage } from './features/requests/MyRequestsPage'
-import { RequestStatusPage } from './features/requests/RequestStatusPage'
+import {
+  RequestProteinDetailPage,
+  RequestStatusPage,
+} from './features/requests/RequestStatusPage'
 import { SubmitProteinPage } from './features/submitProtein/SubmitProteinPage'
 import { LoadingState } from './components/LoadingState'
 import type { AuthUser } from './shared/types'
@@ -23,6 +26,7 @@ type Route =
   | { name: 'myRequests' }
   | { name: 'submit' }
   | { name: 'request'; requestId: string }
+  | { name: 'requestProtein'; requestId: string; proteinId: string }
   | { name: 'latestPrediction'; proteinId?: string }
 
 type IconName =
@@ -113,6 +117,7 @@ function getPageTitle(route: Route) {
     dashboard: 'Operations dashboard',
     latestPrediction: 'Search',
     myRequests: 'My requests',
+    requestProtein: 'Protein result',
     request: 'Request status',
     submit: 'Predict',
   }
@@ -135,6 +140,15 @@ function getNavItemClass(pathname: string, path: string) {
 }
 
 function parseRoute(pathname: string): Route {
+  const requestProteinMatch = pathname.match(/^\/requests\/([^/]+)\/proteins\/([^/]+)$/)
+  if (requestProteinMatch) {
+    return {
+      name: 'requestProtein',
+      requestId: decodeURIComponent(requestProteinMatch[1]),
+      proteinId: decodeURIComponent(requestProteinMatch[2]),
+    }
+  }
+
   const requestMatch = pathname.match(/^\/requests\/([^/]+)$/)
   if (requestMatch) {
     return { name: 'request', requestId: decodeURIComponent(requestMatch[1]) }
@@ -352,6 +366,13 @@ function App() {
           <RequestStatusPage
             isAdmin={isAdmin}
             navigate={navigate}
+            requestId={route.requestId}
+          />
+        )}
+        {route.name === 'requestProtein' && (
+          <RequestProteinDetailPage
+            navigate={navigate}
+            proteinId={route.proteinId}
             requestId={route.requestId}
           />
         )}

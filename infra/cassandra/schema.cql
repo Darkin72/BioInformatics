@@ -120,6 +120,40 @@ CREATE TABLE IF NOT EXISTS protein_rt.requests_by_protein_window (
     PRIMARY KEY (protein_bucket, created_at, request_id)
 ) WITH CLUSTERING ORDER BY (created_at DESC, request_id ASC);
 
+CREATE TABLE IF NOT EXISTS protein_rt.request_proteins_by_request (
+    request_id text,
+    protein_id text,
+    request_date date,
+    created_at timestamp,
+    updated_at timestamp,
+    username text,
+    source text,
+    current_status text,
+    stage_name text,
+    sequence_length int,
+    description text,
+    model_version text,
+    feature_version text,
+    PRIMARY KEY (request_id, protein_id)
+) WITH CLUSTERING ORDER BY (protein_id ASC);
+
+CREATE TABLE IF NOT EXISTS protein_rt.protein_requests_by_protein (
+    protein_id text,
+    created_at timestamp,
+    request_id text,
+    request_date date,
+    updated_at timestamp,
+    username text,
+    source text,
+    current_status text,
+    stage_name text,
+    sequence_length int,
+    description text,
+    model_version text,
+    feature_version text,
+    PRIMARY KEY (protein_id, created_at, request_id)
+) WITH CLUSTERING ORDER BY (created_at DESC, request_id ASC);
+
 CREATE TABLE IF NOT EXISTS protein_rt.request_timeline_by_id (
     request_id text,
     event_ts timestamp,

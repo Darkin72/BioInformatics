@@ -12,19 +12,16 @@ interface SubmitProteinPageProps {
   navigate: (path: string) => void
 }
 
+const maxFastaRecordsPerRequest = 400
+
 export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
   const [fastaContent, setFastaContent] = useState('')
   const [model, setModel] = useState<'' | 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm'>('')
   const [topK, setTopK] = useState('')
   const [threshold, setThreshold] = useState('')
   const [fastaRecords, setFastaRecords] = useState<FastaRecord[]>([])
-  const [selectedFastaIndex, setSelectedFastaIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  function applyFastaRecord(index: number) {
-    setSelectedFastaIndex(index)
-  }
 
   async function handleFastaFile(file: File | null) {
     if (!file) {
@@ -34,9 +31,13 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
     try {
       const content = await file.text()
       const records = parseFasta(content)
+      if (records.length > maxFastaRecordsPerRequest) {
+        throw new Error(
+          `A request can include at most ${maxFastaRecordsPerRequest} proteins. Split this FASTA file into smaller batches.`,
+        )
+      }
       setFastaRecords(records)
       setFastaContent(content)
-      applyFastaRecord(0)
     } catch (loadError) {
       setFastaRecords([])
       setError(loadError instanceof Error ? loadError.message : 'Unable to parse FASTA file.')
@@ -55,16 +56,21 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
       return
     }
 
-    const selectedRecord = records[selectedFastaIndex] ?? records[0]
-    const sequenceError = validateProteinSequence(selectedRecord.sequence)
-
     if (!model) {
       setError('Model is required.')
       return
     }
 
-    if (sequenceError) {
-      setError(sequenceError)
+    if (records.length > maxFastaRecordsPerRequest) {
+      setError(
+        `A request can include at most ${maxFastaRecordsPerRequest} proteins. Split this FASTA file into smaller batches.`,
+      )
+      return
+    }
+
+    const invalidRecord = records.find((record) => validateProteinSequence(record.sequence))
+    if (invalidRecord) {
+      setError(`FASTA record ${invalidRecord.id} has an invalid sequence.`)
       return
     }
     const parsedTopK = Number(topK)
@@ -85,16 +91,20 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
 
     try {
       const created = await createInferenceRequest({
-        protein_id: selectedRecord.id,
-        sequence: selectedRecord.sequence,
+        protein_id: records[0].id,
+        sequence: records[0].sequence,
+        records: records.map((record) => ({
+          id: record.id,
+          sequence: record.sequence,
+          description: record.description || null,
+        })),
         source: 'fasta_ui',
         model,
         top_k: parsedTopK,
         threshold: parsedThreshold,
         metadata: {
           fasta_record_count: records.length,
-          fasta_selected_index: selectedFastaIndex,
-          fasta_description: selectedRecord.description,
+          fasta_description: records[0].description,
         },
       })
       navigate(`/requests/${created.request_id}`)
@@ -173,20 +183,18 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
           />
         </label>
 
-        {fastaRecords.length > 1 ? (
-          <label>
-            FASTA record
-            <select
-              onChange={(event) => applyFastaRecord(Number(event.target.value))}
-              value={selectedFastaIndex}
-            >
-              {fastaRecords.map((record, index) => (
-                <option key={`${record.id}-${index}`} value={index}>
-                  {record.id} ({record.sequence.length} aa)
-                </option>
-              ))}
-            </select>
-          </label>
+        {fastaRecords.length ? (
+          <div className="fasta-record-summary">
+            <strong>{fastaRecords.length} protein{fastaRecords.length === 1 ? '' : 's'}</strong>
+            <span>
+              {fastaRecords
+                .slice(0, 4)
+                .map((record) => `${record.id} (${record.sequence.length} aa)`)
+                .join(', ')}
+              {fastaRecords.length > 4 ? `, +${fastaRecords.length - 4} more` : ''}
+            </span>
+            <span>Limit: {maxFastaRecordsPerRequest} proteins per request.</span>
+          </div>
         ) : null}
 
         <label>
@@ -195,10 +203,14 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
             onChange={(event) => {
               const nextContent = event.target.value
               setFastaContent(nextContent)
-              setSelectedFastaIndex(0)
               try {
-                setFastaRecords(nextContent.trim() ? parseFasta(nextContent) : [])
-                setError(null)
+                const parsedRecords = nextContent.trim() ? parseFasta(nextContent) : []
+                setFastaRecords(parsedRecords)
+                setError(
+                  parsedRecords.length > maxFastaRecordsPerRequest
+                    ? `A request can include at most ${maxFastaRecordsPerRequest} proteins.`
+                    : null,
+                )
               } catch {
                 setFastaRecords([])
               }

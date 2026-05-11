@@ -11,19 +11,32 @@ services:
       PORT: 8000
       JWT_SECRET: ${JWT_SECRET:-dev-local-change-before-shipping}
       JWT_EXPIRES_SECONDS: ${JWT_EXPIRES_SECONDS:-3600}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5174,http://127.0.0.1:5174}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_RETRY_QUEUE: ${RABBITMQ_RETRY_QUEUE:-retry_inference}
       CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
       CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
       CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
       DATABASE_URL: ${DATABASE_URL:-postgresql://protein:protein@postgres:5432/protein_metadata}
       CAFA6_HEALTH_URL: ${CAFA6_HEALTH_URL:-}
       CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_GRAPH_AWARE_PREDICT_SSE_URL: ${CAFA6_GRAPH_AWARE_PREDICT_SSE_URL:-}
+      CAFA6_STREAM_PREDICT_SSE_URL: ${CAFA6_STREAM_PREDICT_SSE_URL:-}
+      CAFA6_STREAM_BATCH_SIZE: ${CAFA6_STREAM_BATCH_SIZE:-1}
+      CAFA6_STREAM_TIMEOUT_SECONDS: ${CAFA6_STREAM_TIMEOUT_SECONDS:-900}
       CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
       CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-60}
+      USER_STORE_PATH: ${USER_STORE_PATH:-tmp/auth_users.json}
     ports:
-      - "${API_HOST_PORT:-8000}:8000"
+      - "${API_HOST_PORT:-8001}:8000"
+    volumes:
+      - ./apps:/app/apps
+      - ./docs:/app/docs:ro
+      - ./tmp:/app/tmp
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,20 +53,153 @@ services:
       retries: 12
     restart: unless-stopped
 
+  replay-service:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-replay-service
+    command:
+      - uvicorn
+      - apps.replay_service.src.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8005"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_NOTIFICATION_QUEUE: ${RABBITMQ_NOTIFICATION_QUEUE:-notification_queue}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    ports:
+      - "${REPLAY_HOST_PORT:-8005}:8005"
+    volumes:
+      - ./cafa6:/app/cafa6:ro
+      - ./tmp:/app/tmp
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  retry-worker:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-retry-worker
+    command:
+      - python
+      - -m
+      - apps.retry_worker.src.main
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_RETRY_QUEUE: ${RABBITMQ_RETRY_QUEUE:-retry_inference}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  spark-streaming:
+    build:
+      context: .
+      dockerfile: jobs/spark_streaming/Dockerfile
+    container_name: bioinformatics-spark-streaming
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_RAW_INPUT_TOPIC: ${KAFKA_RAW_INPUT_TOPIC:-protein.raw-input.v1}
+      KAFKA_VALIDATED_INPUT_TOPIC: ${KAFKA_VALIDATED_INPUT_TOPIC:-protein.validated-input.v1}
+      KAFKA_PREDICTION_TOPIC: ${KAFKA_PREDICTION_TOPIC:-protein.prediction-result.v1}
+      KAFKA_DEAD_LETTER_TOPIC: ${KAFKA_DEAD_LETTER_TOPIC:-protein.dead-letter.v1}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+      CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-900}
+      CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
+    ports:
+      - "${SPARK_STREAMING_UI_HOST_PORT:-4040}:4040"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    profiles: ["streaming"]
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-notification-service
+    command:
+      - uvicorn
+      - apps.notification_service.src.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8003"
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5174,http://127.0.0.1:5174}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_REQUEST_STATUS_TOPIC: ${KAFKA_REQUEST_STATUS_TOPIC:-request_status}
+      KAFKA_PREDICTION_TOPIC: ${KAFKA_PREDICTION_TOPIC:-prediction_result}
+      KAFKA_DEAD_LETTER_TOPIC: ${KAFKA_DEAD_LETTER_TOPIC:-dead_letter}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    ports:
+      - "${NOTIFICATION_HOST_PORT:-8004}:8003"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   frontend:
     build:
       context: .
       dockerfile: docker/frontend/Dockerfile
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     container_name: bioinformatics-frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8001}
+      VITE_EVENTS_BASE_URL: ${VITE_EVENTS_BASE_URL:-http://localhost:8004}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-true}
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-true}
     ports:
-      - "${FRONTEND_HOST_PORT:-5173}:80"
+      - "${FRONTEND_HOST_PORT:-5174}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
     depends_on:
       serving-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -67,7 +213,7 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-9092}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-9093}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -79,7 +225,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
-      - "${KAFKA_HOST_PORT:-9092}:9094"
+      - "${KAFKA_HOST_PORT:-9093}:9094"
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -108,8 +254,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-protein}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-protein}
     ports:
-      - "${RABBITMQ_AMQP_HOST_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
+      - "${RABBITMQ_AMQP_HOST_PORT:-5673}:5672"
+      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15673}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -127,7 +273,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-protein}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-protein}
     ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
@@ -148,7 +294,7 @@ services:
       MAX_HEAP_SIZE: 768M
       HEAP_NEWSIZE: 192M
     ports:
-      - "${CASSANDRA_HOST_PORT:-9042}:9042"
+      - "${CASSANDRA_HOST_PORT:-9043}:9042"
     volumes:
       - cassandra_data:/var/lib/cassandra
     healthcheck:
@@ -185,8 +331,8 @@ services:
       - --webui-port
       - "8080"
     ports:
-      - "${SPARK_MASTER_WEB_HOST_PORT:-8080}:8080"
-      - "${SPARK_MASTER_HOST_PORT:-7077}:7077"
+      - "${SPARK_MASTER_WEB_HOST_PORT:-8081}:8080"
+      - "${SPARK_MASTER_HOST_PORT:-7078}:7077"
     volumes:
       - ./jobs:/opt/bitnami/spark/jobs:ro
       - ./ml:/opt/bitnami/spark/ml:ro
@@ -206,7 +352,7 @@ services:
       - --webui-port
       - "8081"
     ports:
-      - "${SPARK_WORKER_WEB_HOST_PORT:-8081}:8081"
+      - "${SPARK_WORKER_WEB_HOST_PORT:-8082}:8081"
     depends_on:
       - spark-master
     volumes:
@@ -219,3 +365,4 @@ volumes:
   rabbitmq_data:
   postgres_data:
   cassandra_data:
+  frontend_node_modules:

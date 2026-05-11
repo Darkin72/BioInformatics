@@ -3,10 +3,10 @@ import type { FormEvent } from 'react'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
+import { StatusBadge } from '../../components/StatusBadge'
 import { formatDateTime } from '../../shared/date'
-import { formatScore } from '../../shared/format'
-import type { LatestPrediction } from '../../shared/types'
-import { getLatestPrediction } from './predictionsApi'
+import type { ProteinRequestList } from '../../shared/types'
+import { getProteinRequests } from './predictionsApi'
 
 interface LatestPredictionPageProps {
   proteinId?: string
@@ -20,11 +20,11 @@ export function LatestPredictionPage({
   const [searchValue, setSearchValue] = useState(proteinId ?? 'P12345')
   const [remoteState, setRemoteState] = useState<{
     proteinId: string
-    prediction: LatestPrediction | null
+    result: ProteinRequestList | null
     error: string | null
   }>({
     proteinId: '',
-    prediction: null,
+    result: null,
     error: null,
   })
   const [hasSearched, setHasSearched] = useState(Boolean(proteinId))
@@ -36,7 +36,7 @@ export function LatestPredictionPage({
     if (!id) {
       setRemoteState({
         proteinId: '',
-        prediction: null,
+        result: null,
         error: 'Protein ID is required.',
       })
       return
@@ -46,47 +46,45 @@ export function LatestPredictionPage({
   }
 
   useEffect(() => {
-    if (proteinId) {
-      let isActive = true
+    if (!proteinId) {
+      return
+    }
 
-      getLatestPrediction(proteinId)
-        .then((data) => {
-          if (isActive) {
-            setRemoteState({
-              proteinId,
-              prediction: data,
-              error: null,
-            })
-            setHasSearched(true)
-          }
-        })
-        .catch((loadError: unknown) => {
-          if (isActive) {
-            setRemoteState({
-              proteinId,
-              prediction: null,
-              error:
-                loadError instanceof Error
-                  ? loadError.message
-                  : 'Unable to load latest prediction.',
-            })
-          }
-        })
+    let isActive = true
 
-      return () => {
-        isActive = false
-      }
+    getProteinRequests(proteinId)
+      .then((data) => {
+        if (isActive) {
+          setRemoteState({
+            proteinId,
+            result: data,
+            error: null,
+          })
+          setHasSearched(true)
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isActive) {
+          setRemoteState({
+            proteinId,
+            result: null,
+            error:
+              loadError instanceof Error
+                ? loadError.message
+                : 'Unable to load protein requests.',
+          })
+        }
+      })
+
+    return () => {
+      isActive = false
     }
   }, [proteinId])
 
-  const prediction =
-    proteinId && remoteState.proteinId === proteinId
-      ? remoteState.prediction
-      : null
+  const result =
+    proteinId && remoteState.proteinId === proteinId ? remoteState.result : null
   const error =
-    !proteinId || remoteState.proteinId === proteinId
-      ? remoteState.error
-      : null
+    !proteinId || remoteState.proteinId === proteinId ? remoteState.error : null
   const isLoading = Boolean(
     proteinId && remoteState.proteinId !== proteinId && !error,
   )
@@ -95,8 +93,8 @@ export function LatestPredictionPage({
     <section className="page-stack">
       <div className="section-header">
         <div>
-          <h2>Latest prediction</h2>
-          <p>Search the serving store by protein ID.</p>
+          <h2>Protein requests</h2>
+          <p>Search request history by protein ID.</p>
         </div>
       </div>
 
@@ -116,52 +114,54 @@ export function LatestPredictionPage({
 
       {isLoading ? <LoadingState /> : null}
       {error ? <ErrorState message={error} /> : null}
-      {!isLoading && !error && hasSearched && !prediction ? (
-        <EmptyState message="No prediction found for this protein." />
+      {!isLoading && !error && hasSearched && result?.items.length === 0 ? (
+        <EmptyState message="No requests found for this protein." />
       ) : null}
 
-      {!isLoading && prediction ? (
+      {!isLoading && result && result.items.length > 0 ? (
         <section className="panel">
           <div className="section-header compact">
             <div>
-              <h2>{prediction.protein_id}</h2>
-              <p>{prediction.confidence_summary ?? 'No summary available.'}</p>
+              <h2>{result.protein_id}</h2>
+              <p>
+                {result.returned} request{result.returned === 1 ? '' : 's'} found
+                from {result.source}.
+              </p>
             </div>
-            <span className="mono">{prediction.model_version}</span>
+            <span>{formatDateTime(result.updated_at)}</span>
           </div>
-
-          <dl className="detail-grid compact-details">
-            <div>
-              <dt>Request ID</dt>
-              <dd>{prediction.request_id}</dd>
-            </div>
-            <div>
-              <dt>Predicted</dt>
-              <dd>{formatDateTime(prediction.predicted_at)}</dd>
-            </div>
-          </dl>
 
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>GO term</th>
-                  <th>Name</th>
-                  <th>Ontology</th>
-                  <th>Score</th>
+                  <th>Request</th>
+                  <th>User</th>
+                  <th>Status</th>
+                  <th>Stage</th>
+                  <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
-                {[...prediction.top_terms]
-                  .sort((left, right) => right.score - left.score)
-                  .map((term) => (
-                    <tr key={term.term_id}>
-                      <td className="mono">{term.term_id}</td>
-                      <td>{term.term_name ?? '-'}</td>
-                      <td>{term.ontology ?? '-'}</td>
-                      <td>{formatScore(term.score)}</td>
-                    </tr>
-                  ))}
+                {result.items.map((request) => (
+                  <tr key={request.request_id}>
+                    <td>
+                      <button
+                        className="table-link"
+                        onClick={() => navigate(`/requests/${request.request_id}`)}
+                        type="button"
+                      >
+                        {request.request_id}
+                      </button>
+                    </td>
+                    <td>{request.username ?? '-'}</td>
+                    <td>
+                      <StatusBadge status={request.current_status} />
+                    </td>
+                    <td>{request.stage_name ?? '-'}</td>
+                    <td>{formatDateTime(request.updated_at ?? request.created_at)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

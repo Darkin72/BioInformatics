@@ -6,7 +6,7 @@ export type RequestStatus =
   | 'retrying'
   | 'cancelled'
 
-export type UserRole = 'viewer' | 'operator' | 'admin'
+export type UserRole = 'user' | 'admin'
 
 export interface AuthUser {
   username: string
@@ -15,6 +15,11 @@ export interface AuthUser {
 }
 
 export interface LoginCredentials {
+  username: string
+  password: string
+}
+
+export interface RegisterCredentials {
   username: string
   password: string
 }
@@ -29,6 +34,8 @@ export interface LoginResponse {
 export interface InferenceRequest {
   request_id: string
   protein_id: string
+  username?: string
+  source?: string
   created_at: string
   updated_at?: string
   current_status: RequestStatus
@@ -45,6 +52,7 @@ export interface PredictionTerm {
   term_name?: string
   ontology?: 'BP' | 'MF' | 'CC'
   score: number
+  definition?: string | null
 }
 
 export interface LatestPrediction {
@@ -54,6 +62,34 @@ export interface LatestPrediction {
   model_version: string
   top_terms: PredictionTerm[]
   confidence_summary?: string
+  server_result?: Record<string, unknown> | null
+}
+
+export interface RequestInput {
+  protein_id: string
+  sequence?: string | null
+  sequence_length?: number | null
+  records?: Array<{
+    protein_id: string
+    sequence?: string | null
+    sequence_length?: number | null
+    description?: string | null
+  }> | null
+  source?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export interface RequestResult {
+  request: InferenceRequest
+  input?: RequestInput | null
+  prediction?: LatestPrediction | null
+  protein_results?: LatestPrediction[]
+  server_result?: Record<string, unknown> | null
+  stream_events?: Array<{
+    eventType: string
+    payload: Record<string, unknown>
+    receivedAt: string
+  }>
 }
 
 export interface PipelineMetricPoint {
@@ -71,14 +107,104 @@ export interface DashboardSummary {
   p95_latency_ms: number
   error_rate: number
   throughput: PipelineMetricPoint[]
+  recent_requests: InferenceRequest[]
   recent_predictions: LatestPrediction[]
   recent_failed_requests: InferenceRequest[]
+  error_counts: Record<string, number>
+  cassandra_query_patterns: string[]
+  cassandra_write_tables: Record<string, number>
+  kafka_topics: string[]
+  updated_at: string
+}
+
+export interface DashboardLiveSnapshot {
+  updated_at: string
+  avg_latency_ms: number
+  p95_latency_ms: number
+  throughput: PipelineMetricPoint[]
+  status_counts: Partial<Record<RequestStatus, number>>
+  error_codes: Record<string, number>
+  cassandra: {
+    write_tables: Record<string, number>
+    active_query_patterns: string[]
+    last_event_at?: string | null
+  }
+}
+
+export interface AdminRequestList {
+  items: InferenceRequest[]
+  source: string
+  limit: number
+  table: string
+  page: number
+  page_size: number
+  returned: number
+  has_next: boolean
+  updated_at: string
+}
+
+export interface UserRequestList {
+  items: InferenceRequest[]
+  source: string
+  limit: number
+  page: number
+  page_size: number
+  returned: number
+  has_next: boolean
+  days: number
+  updated_at: string
+}
+
+export interface AdminUserItem {
+  username: string
+  roles: UserRole[]
+  is_admin: boolean
+}
+
+export interface AdminUserList {
+  items: AdminUserItem[]
+  returned: number
+  updated_at: string
+}
+
+export interface ProteinRequestList {
+  protein_id: string
+  items: InferenceRequest[]
+  source: string
+  limit: number
+  returned: number
+  updated_at: string
+}
+
+export interface RequestTimelineEvent {
+  request_id: string
+  event_ts: string
+  event_type: string
+  stage_name?: string
+  status?: string
+  message?: string
+  latency_ms?: number
+  payload?: string
+}
+
+export interface RetryRequestResponse {
+  status: string
+  request: InferenceRequest
+  retry_count: number
   updated_at: string
 }
 
 export interface CreateInferenceRequestPayload {
-  protein_id: string
-  sequence: string
+  protein_id?: string | null
+  sequence?: string | null
+  records?: Array<{
+    id: string
+    sequence: string
+    description?: string | null
+  }>
   source: string
+  model?: 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm'
+  top_k?: number | null
+  threshold?: number | null
   metadata?: Record<string, unknown>
 }

@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { ErrorState } from '../../components/ErrorState'
-import { StatusBadge } from '../../components/StatusBadge'
-import { formatDateTime } from '../../shared/date'
-import type { InferenceRequest } from '../../shared/types'
 import {
-  normalizeProteinSequence,
+  parseFasta,
   validateProteinSequence,
+  type FastaRecord,
 } from './proteinValidation'
 import { createInferenceRequest } from './submitProteinApi'
 
@@ -14,54 +12,102 @@ interface SubmitProteinPageProps {
   navigate: (path: string) => void
 }
 
+const maxFastaRecordsPerRequest = 400
+
 export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
-  const [proteinId, setProteinId] = useState('P12345')
-  const [sequence, setSequence] = useState('MENDELACDEFGHIKLMNPQRSTVWY')
-  const [source, setSource] = useState('manual_ui')
-  const [metadata, setMetadata] = useState('{\n  "species": "optional"\n}')
-  const [createdRequest, setCreatedRequest] =
-    useState<InferenceRequest | null>(null)
+  const [fastaContent, setFastaContent] = useState('')
+  const [model, setModel] = useState<'' | 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm'>('')
+  const [topK, setTopK] = useState('')
+  const [threshold, setThreshold] = useState('')
+  const [fastaRecords, setFastaRecords] = useState<FastaRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function handleFastaFile(file: File | null) {
+    if (!file) {
+      return
+    }
+    setError(null)
+    try {
+      const content = await file.text()
+      const records = parseFasta(content)
+      if (records.length > maxFastaRecordsPerRequest) {
+        throw new Error(
+          `A request can include at most ${maxFastaRecordsPerRequest} proteins. Split this FASTA file into smaller batches.`,
+        )
+      }
+      setFastaRecords(records)
+      setFastaContent(content)
+    } catch (loadError) {
+      setFastaRecords([])
+      setError(loadError instanceof Error ? loadError.message : 'Unable to parse FASTA file.')
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
-    setCreatedRequest(null)
 
-    const normalizedSequence = normalizeProteinSequence(sequence)
-    const sequenceError = validateProteinSequence(normalizedSequence)
-
-    if (!proteinId.trim()) {
-      setError('Protein ID is required.')
+    let records: FastaRecord[] = []
+    try {
+      records = parseFasta(fastaContent)
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : 'Invalid FASTA content.')
       return
     }
 
-    if (sequenceError) {
-      setError(sequenceError)
+    if (!model) {
+      setError('Model is required.')
       return
     }
 
-    let parsedMetadata: Record<string, unknown> | undefined
-    if (metadata.trim()) {
-      try {
-        parsedMetadata = JSON.parse(metadata) as Record<string, unknown>
-      } catch {
-        setError('Metadata must be valid JSON.')
-        return
-      }
+    if (records.length > maxFastaRecordsPerRequest) {
+      setError(
+        `A request can include at most ${maxFastaRecordsPerRequest} proteins. Split this FASTA file into smaller batches.`,
+      )
+      return
+    }
+
+    const invalidRecord = records.find((record) => validateProteinSequence(record.sequence))
+    if (invalidRecord) {
+      setError(`FASTA record ${invalidRecord.id} has an invalid sequence.`)
+      return
+    }
+    const parsedTopK = Number(topK)
+    if (!Number.isInteger(parsedTopK) || parsedTopK < 1 || parsedTopK > 500) {
+      setError('Top K must be an integer between 1 and 500.')
+      return
+    }
+    const parsedThreshold = threshold.trim() ? Number(threshold) : null
+    if (
+      parsedThreshold !== null &&
+      (!Number.isFinite(parsedThreshold) || parsedThreshold < 0 || parsedThreshold > 1)
+    ) {
+      setError('Threshold must be empty or a number between 0 and 1.')
+      return
     }
 
     setIsSubmitting(true)
 
     try {
       const created = await createInferenceRequest({
-        protein_id: proteinId.trim(),
-        sequence: normalizedSequence,
-        source,
-        metadata: parsedMetadata,
+        protein_id: records[0].id,
+        sequence: records[0].sequence,
+        records: records.map((record) => ({
+          id: record.id,
+          sequence: record.sequence,
+          description: record.description || null,
+        })),
+        source: 'fasta_ui',
+        model,
+        top_k: parsedTopK,
+        threshold: parsedThreshold,
+        metadata: {
+          fasta_record_count: records.length,
+          fasta_description: records[0].description,
+        },
       })
-      setCreatedRequest(created)
+      navigate(`/requests/${created.request_id}`)
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -77,87 +123,112 @@ export function SubmitProteinPage({ navigate }: SubmitProteinPageProps) {
     <section className="page-stack">
       <div className="section-header">
         <div>
-          <h2>Submit protein sequence</h2>
+        <h2>Predict protein function</h2>
           <p>Create a new inference request for the streaming pipeline.</p>
         </div>
       </div>
 
       <form className="form-panel" onSubmit={handleSubmit}>
-        <label>
-          Protein ID
-          <input
-            onChange={(event) => setProteinId(event.target.value)}
-            placeholder="P12345"
-            value={proteinId}
-          />
-        </label>
-
-        <label>
-          Sequence
-          <textarea
-            onChange={(event) => setSequence(event.target.value)}
-            rows={7}
-            value={sequence}
-          />
-        </label>
+        <div className="form-row">
+          <label>
+            Model
+            <select
+              onChange={(event) =>
+                setModel(event.target.value as '' | 'ensemble' | 'esm_mlp' | 'protcnn' | 'bilstm')
+              }
+              value={model}
+            >
+              <option value="">Select model</option>
+              <option value="ensemble">Ensemble</option>
+              <option value="esm_mlp">ESM MLP</option>
+              <option value="protcnn">ProtCNN</option>
+              <option value="bilstm">BiLSTM</option>
+            </select>
+          </label>
+        </div>
 
         <div className="form-row">
           <label>
-            Source
+            Top K
             <input
-              onChange={(event) => setSource(event.target.value)}
-              value={source}
+              max={500}
+              min={1}
+              onChange={(event) => setTopK(event.target.value)}
+              placeholder="1-500"
+              type="number"
+              value={topK}
             />
           </label>
 
           <label>
-            Metadata JSON
-            <textarea
-              onChange={(event) => setMetadata(event.target.value)}
-              rows={5}
-              value={metadata}
+            Threshold
+            <input
+              max={1}
+              min={0}
+              onChange={(event) => setThreshold(event.target.value)}
+              placeholder="0-1"
+              step="0.01"
+              type="number"
+              value={threshold}
             />
           </label>
         </div>
+
+        <label>
+          FASTA file
+          <input
+            accept=".fa,.faa,.fasta,.txt"
+            onChange={(event) => void handleFastaFile(event.target.files?.[0] ?? null)}
+            type="file"
+          />
+        </label>
+
+        {fastaRecords.length ? (
+          <div className="fasta-record-summary">
+            <strong>{fastaRecords.length} protein{fastaRecords.length === 1 ? '' : 's'}</strong>
+            <span>
+              {fastaRecords
+                .slice(0, 4)
+                .map((record) => `${record.id} (${record.sequence.length} aa)`)
+                .join(', ')}
+              {fastaRecords.length > 4 ? `, +${fastaRecords.length - 4} more` : ''}
+            </span>
+            <span>Limit: {maxFastaRecordsPerRequest} proteins per request.</span>
+          </div>
+        ) : null}
+
+        <label>
+          FASTA content
+          <textarea
+            onChange={(event) => {
+              const nextContent = event.target.value
+              setFastaContent(nextContent)
+              try {
+                const parsedRecords = nextContent.trim() ? parseFasta(nextContent) : []
+                setFastaRecords(parsedRecords)
+                setError(
+                  parsedRecords.length > maxFastaRecordsPerRequest
+                    ? `A request can include at most ${maxFastaRecordsPerRequest} proteins.`
+                    : null,
+                )
+              } catch {
+                setFastaRecords([])
+              }
+            }}
+            placeholder={'>protein_id optional description\nMTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQV'}
+            rows={9}
+            value={fastaContent}
+          />
+        </label>
 
         {error ? <ErrorState message={error} /> : null}
 
         <div className="actions-row">
           <button className="primary-button" disabled={isSubmitting} type="submit">
-            {isSubmitting ? 'Submitting...' : 'Submit request'}
+            {isSubmitting ? 'Creating request...' : 'Predict'}
           </button>
         </div>
       </form>
-
-      {createdRequest ? (
-        <section className="panel success-panel">
-          <div className="section-header compact">
-            <h2>Request created</h2>
-            <StatusBadge status={createdRequest.current_status} />
-          </div>
-          <dl className="detail-grid">
-            <div>
-              <dt>Request ID</dt>
-              <dd>{createdRequest.request_id}</dd>
-            </div>
-            <div>
-              <dt>Protein ID</dt>
-              <dd>{createdRequest.protein_id}</dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>{formatDateTime(createdRequest.created_at)}</dd>
-            </div>
-          </dl>
-          <button
-            className="secondary-button"
-            onClick={() => navigate(`/requests/${createdRequest.request_id}`)}
-            type="button"
-          >
-            Open request status
-          </button>
-        </section>
-      ) : null}
     </section>
   )
 }

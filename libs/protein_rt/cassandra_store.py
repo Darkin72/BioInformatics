@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from .config import CassandraConfig
@@ -167,6 +167,57 @@ class CassandraStore:
                 failure.stage_name,
                 failure.error_message,
                 failure.retryable,
+            ),
+        )
+
+    def put_feature_snapshot(
+        self,
+        request_id: str,
+        protein_id: str,
+        feature_version: str,
+        feature_hash: str,
+        feature_payload_ref: str | None = None,
+        embedding_vector_ref: str | None = None,
+    ) -> None:
+        self._session.execute(
+            """
+            INSERT INTO feature_snapshot_by_request (
+                request_id, protein_id, feature_version, generated_at,
+                feature_hash, feature_payload_ref, embedding_vector_ref
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                request_id,
+                protein_id,
+                feature_version,
+                datetime.utcnow(),
+                feature_hash,
+                feature_payload_ref,
+                embedding_vector_ref,
+            ),
+        )
+
+    def put_pipeline_metric(
+        self,
+        metric_name: str,
+        metric_value: float,
+        tags: dict[str, str] | None = None,
+        window_start: datetime | None = None,
+    ) -> None:
+        start = (window_start or datetime.utcnow()).replace(second=0, microsecond=0)
+        self._session.execute(
+            """
+            INSERT INTO pipeline_metrics_by_window (
+                metric_date, metric_name, window_start, window_end, metric_value, tags
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                start.date(),
+                metric_name,
+                start,
+                start + timedelta(minutes=1),
+                metric_value,
+                tags or {},
             ),
         )
 

@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.cql text eol=lf
+Dockerfile text eol=lf
+docker/**/Dockerfile text eol=lf

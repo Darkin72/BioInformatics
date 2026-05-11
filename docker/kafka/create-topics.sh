@@ -5,9 +5,11 @@ BOOTSTRAP_SERVER="${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
 KAFKA_TOPICS_BIN="${KAFKA_TOPICS_BIN:-/opt/kafka/bin/kafka-topics.sh}"
 
 topics=(
-  "raw_protein_input"
-  "validated_protein_input"
-  "inference_request"
+  "protein.raw-input.v1"
+  "protein.validated-input.v1"
+  "protein.prediction-result.v1"
+  "protein.dead-letter.v1"
+  "request_status"
   "prediction_result"
   "dead_letter"
 )

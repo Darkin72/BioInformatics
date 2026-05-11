@@ -445,32 +445,32 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **0.1 Phân tích yêu cầu**
 
-- [ ] Viết document mục tiêu hệ thống
-- [ ] Liệt kê actor, input, output
-- [ ] Liệt kê SLA mong muốn: throughput, latency, availability
-- [ ] Chốt các truy vấn API/dashboard cần hỗ trợ
+- [x] Viết document mục tiêu hệ thống
+- [x] Liệt kê actor, input, output
+- [x] Liệt kê SLA mong muốn: throughput, latency, availability
+- [x] Chốt các truy vấn API/dashboard cần hỗ trợ
 
 **0.2 Phân tích data source**
 
-- [ ] Tải và kiểm tra cấu trúc CAFA-6
-- [ ] Liệt kê file nào dùng cho training / validation / replay
-- [ ] Xác định schema sequence, label, ontology
-- [ ] Kiểm tra chất lượng dữ liệu: null, duplicate, invalid sequence
+- [x] Tải và kiểm tra cấu trúc CAFA-6
+- [x] Liệt kê file nào dùng cho training / validation / replay
+- [x] Xác định schema sequence, label, ontology
+- [x] Kiểm tra chất lượng dữ liệu: null, duplicate, invalid sequence
 
 **0.3 Phân tích solution competition**
 
-- [ ] Chọn 2-3 solution khả thi
-- [ ] So sánh theo độ khó tái hiện, độ nặng inference, dependency
-- [ ] Chọn 1 solution chính và 1 solution backup
-- [ ] Viết note pipeline input/output của solution
+- [x] Chọn 2-3 solution khả thi
+- [x] So sánh theo độ khó tái hiện, độ nặng inference, dependency
+- [x] Chọn 1 solution chính và 1 solution backup
+- [x] Viết note pipeline input/output của solution
 
 **0.4 Thiết kế kiến trúc sơ bộ**
 
-- [ ] Vẽ system context diagram
-- [ ] Vẽ data flow diagram
-- [ ] Xác định topic Kafka
-- [ ] Xác định queue RabbitMQ
-- [ ] Xác định Cassandra keyspace/table sơ bộ
+- [x] Vẽ system context diagram
+- [x] Vẽ data flow diagram
+- [x] Xác định topic Kafka
+- [x] Xác định queue RabbitMQ
+- [x] Xác định Cassandra keyspace/table sơ bộ
 
 #### Deliverable
 
@@ -492,30 +492,30 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **1.1 Khảo sát dữ liệu CAFA-6**
 
-- [ ] Thống kê số lượng protein
-- [ ] Thống kê độ dài sequence
-- [ ] Thống kê phân bố label/GO term
-- [ ] Xác định trường nào cần cho inference realtime
+- [x] Thống kê số lượng protein
+- [x] Thống kê độ dài sequence
+- [x] Thống kê phân bố label/GO term
+- [x] Xác định trường nào cần cho inference realtime
 
 **1.2 Chuẩn hóa schema event**
 
-- [ ] Thiết kế JSON schema cho raw input event
-- [ ] Thiết kế JSON schema cho validated event
-- [ ] Thiết kế JSON schema cho prediction result
-- [ ] Thiết kế schema cho dead-letter event
+- [x] Thiết kế JSON schema cho raw input event
+- [x] Thiết kế JSON schema cho validated event
+- [x] Thiết kế JSON schema cho prediction result
+- [x] Thiết kế schema cho dead-letter event
 
 **1.3 Chuẩn hóa id và metadata**
 
-- [ ] Quy ước request_id
-- [ ] Quy ước protein_id
-- [ ] Quy ước model_version / feature_version
-- [ ] Quy ước timestamp và timezone
+- [x] Quy ước request_id
+- [x] Quy ước protein_id
+- [x] Quy ước model_version / feature_version
+- [x] Quy ước timestamp và timezone
 
 **1.4 Data contracts**
 
-- [ ] Viết tài liệu contract producer-consumer
-- [ ] Định nghĩa rule validate sequence
-- [ ] Định nghĩa checksum/hash strategy
+- [x] Viết tài liệu contract producer-consumer
+- [x] Định nghĩa rule validate sequence
+- [x] Định nghĩa checksum/hash strategy
 
 #### Deliverable
 
@@ -536,32 +536,32 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **2.1 Kafka design**
 
-- [ ] Tạo danh sách topic cần thiết
-- [ ] Định nghĩa retention cho từng topic
-- [ ] Định nghĩa số partition ban đầu
-- [ ] Thiết kế key cho producer để phân phối đều partition
-- [ ] Thiết kế DLQ strategy
+- [x] Tạo danh sách topic cần thiết
+- [x] Định nghĩa retention cho từng topic
+- [x] Định nghĩa số partition ban đầu
+- [x] Thiết kế key cho producer để phân phối đều partition
+- [x] Thiết kế DLQ strategy
 
 **2.2 RabbitMQ design**
 
-- [ ] Xác định queue cho command/control/retry
-- [ ] Chọn loại exchange: direct/topic/fanout
-- [ ] Thiết kế routing key convention
-- [ ] Thiết kế retry queue và poison message handling
-- [ ] Thiết kế ack/requeue policy
+- [x] Xác định queue cho command/control/retry
+- [x] Chọn loại exchange: direct/topic/fanout
+- [x] Thiết kế routing key convention
+- [x] Thiết kế retry queue và poison message handling
+- [x] Thiết kế ack/requeue policy
 
 **2.3 Streaming replay service**
 
-- [ ] Viết service phát lại dữ liệu CAFA-6 thành stream
-- [ ] Hỗ trợ cấu hình tốc độ phát
-- [ ] Hỗ trợ pause/resume
-- [ ] Hỗ trợ inject lỗi để test
+- [x] Viết service phát lại dữ liệu CAFA-6 thành stream
+- [x] Hỗ trợ cấu hình tốc độ phát
+- [x] Hỗ trợ pause/resume
+- [x] Hỗ trợ inject lỗi để test
 
 **2.4 Local/dev infrastructure**
 
 - [x] Viết Docker Compose cho Kafka, RabbitMQ, Cassandra, PostgreSQL, Spark
 - [x] Viết script bootstrap topic/queue/keyspace
-- [ ] Kiểm tra end-to-end dev environment
+- [x] Kiểm tra end-to-end dev environment
 
 #### Deliverable
 
@@ -581,28 +581,28 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **3.1 Chốt query-driven schema**
 
-- [ ] Review tất cả access pattern với team backend
-- [ ] Tính cardinality cho partition key
-- [ ] Dự đoán kích thước partition
-- [ ] Chốt bảng và khóa chính
+- [x] Review tất cả access pattern với team backend
+- [x] Tính cardinality cho partition key
+- [x] Dự đoán kích thước partition
+- [x] Chốt bảng và khóa chính
 
 **3.2 Thiết kế bảng**
 
-- [ ] Viết CQL cho keyspace
-- [ ] Viết CQL cho bảng raw events
-- [ ] Viết CQL cho bảng request status
-- [ ] Viết CQL cho bảng latest prediction
-- [ ] Viết CQL cho bảng prediction history
-- [ ] Viết CQL cho bảng failed requests
-- [ ] Viết CQL cho bảng metrics
+- [x] Viết CQL cho keyspace
+- [x] Viết CQL cho bảng raw events
+- [x] Viết CQL cho bảng request status
+- [x] Viết CQL cho bảng latest prediction
+- [x] Viết CQL cho bảng prediction history
+- [x] Viết CQL cho bảng failed requests
+- [x] Viết CQL cho bảng metrics
 
 **3.3 Chính sách vận hành Cassandra**
 
-- [ ] Chọn replication factor
-- [ ] Chọn consistency level cho từng luồng ghi/đọc
-- [ ] Chọn compaction strategy từng bảng
-- [ ] Chọn TTL cho bảng raw/log/metrics
-- [ ] Thiết kế backup/restore sơ bộ
+- [x] Chọn replication factor
+- [x] Chọn consistency level cho từng luồng ghi/đọc
+- [x] Chọn compaction strategy từng bảng
+- [x] Chọn TTL cho bảng raw/log/metrics
+- [x] Thiết kế backup/restore sơ bộ
 
 **3.4 Benchmark Cassandra**
 
@@ -614,9 +614,9 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **3.5 Data access layer**
 
-- [ ] Viết repository/service cho Cassandra
-- [ ] Chuẩn hóa retry policy phía application
-- [ ] Thêm idempotency logic cho ghi prediction
+- [x] Viết repository/service cho Cassandra
+- [x] Chuẩn hóa retry policy phía application
+- [x] Thêm idempotency logic cho ghi prediction
 - [ ] Viết integration test cho từng bảng
 
 ### Giai đoạn 3B - Thiết kế và triển khai PostgreSQL metadata store (1-2 tuần)
@@ -632,8 +632,8 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 - [x] Tạo schema ban đầu cho dataset catalog, model registry, replay campaign và operator audit log
 - [ ] Thiết kế bảng user/role/permission nếu auth chuyển khỏi in-memory
 - [ ] Thêm migration tool như Alembic cho schema PostgreSQL
-- [ ] Viết repository/service cho PostgreSQL trong Serving API
-- [ ] Kết nối model registry và replay campaign vào API/dashboard
+- [x] Viết repository/service cho PostgreSQL trong Serving API
+- [x] Kết nối model registry và replay campaign vào API/dashboard
 
 #### Deliverable
 
@@ -659,45 +659,45 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **4.1 Input ingestion**
 
-- [ ] Đọc raw event từ Kafka
-- [ ] Parse JSON schema
-- [ ] Reject event lỗi format
-- [ ] Ghi event lỗi vào DLQ
+- [x] Đọc raw event từ Kafka
+- [x] Parse JSON schema
+- [x] Reject event lỗi format
+- [x] Ghi event lỗi vào DLQ
 
 **4.2 Validation & normalization**
 
-- [ ] Validate protein sequence
-- [ ] Normalize metadata
-- [ ] Khử duplicate theo request_id/checksum
-- [ ] Gắn processing timestamp
+- [x] Validate protein sequence
+- [x] Normalize metadata
+- [x] Khử duplicate theo request_id/checksum
+- [x] Gắn processing timestamp
 
 **4.3 Feature preparation**
 
-- [ ] Chuẩn hóa input cho solution đã chọn
-- [ ] Sinh feature/embedding
-- [ ] Cache hoặc reference feature snapshot
-- [ ] Ghi feature metadata vào Cassandra
+- [x] Chuẩn hóa input cho solution đã chọn
+- [x] Sinh feature/embedding
+- [x] Cache hoặc reference feature snapshot
+- [x] Ghi feature metadata vào Cassandra
 
 **4.4 Inference orchestration**
 
-- [ ] Gọi module inference trực tiếp trong Spark hoặc qua service
-- [ ] Hỗ trợ micro-batch scoring
-- [ ] Gắn model_version
-- [ ] Bắt lỗi timeout/failure
+- [x] Gọi module inference trực tiếp trong Spark hoặc qua service
+- [x] Hỗ trợ micro-batch scoring
+- [x] Gắn model_version
+- [x] Bắt lỗi timeout/failure
 
 **4.5 Post-processing**
 
-- [ ] Chuẩn hóa output thành danh sách GO term + score
-- [ ] Áp threshold hoặc ranking rule
-- [ ] Sinh confidence summary
-- [ ] Ghi prediction vào Cassandra
+- [x] Chuẩn hóa output thành danh sách GO term + score
+- [x] Áp threshold hoặc ranking rule
+- [x] Sinh confidence summary
+- [x] Ghi prediction vào Cassandra
 
 **4.6 Operational metrics**
 
-- [ ] Tính latency từng stage
-- [ ] Tính throughput theo micro-batch
-- [ ] Tính error rate
-- [ ] Ghi metrics về Cassandra và monitoring sink
+- [x] Tính latency từng stage
+- [x] Tính throughput theo micro-batch
+- [x] Tính error rate
+- [x] Ghi metrics về Cassandra và monitoring sink
 
 #### Deliverable
 
@@ -718,20 +718,20 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 **5.1 Reproduce baseline**
 
 - [ ] Clone/viết lại pipeline solution
-- [ ] Xác minh input/output format
-- [ ] Chạy thử offline trên sample data
+- [x] Xác minh input/output format
+- [x] Chạy thử offline trên sample data
 - [ ] So sánh kết quả với baseline kỳ vọng
 
 **5.2 Tách module hóa**
 
-- [ ] Tách preprocess function
+- [x] Tách preprocess function
 - [ ] Tách feature builder
-- [ ] Tách predictor
-- [ ] Tách postprocessor
+- [x] Tách predictor
+- [x] Tách postprocessor
 
 **5.3 Tối ưu inference**
 
-- [ ] Đo latency từng request
+- [x] Đo latency từng request
 - [ ] Test batch inference vs single inference
 - [ ] Cân nhắc cache model trong memory
 - [ ] Giảm dependency không cần thiết
@@ -739,7 +739,7 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 **5.4 Versioning & reproducibility**
 
 - [ ] Đóng gói model artifact
-- [ ] Gắn model_version
+- [x] Gắn model_version
 - [ ] Lưu config inference
 - [ ] Lưu seed/parameter nếu cần reproducibility
 
@@ -761,25 +761,25 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **6.1 Serving API**
 
-- [ ] API tra cứu trạng thái request
-- [ ] API lấy latest prediction theo protein_id
-- [ ] API lấy prediction history
-- [ ] API retry request lỗi
-- [ ] API health check
+- [x] API tra cứu trạng thái request
+- [x] API lấy latest prediction theo protein_id
+- [x] API lấy prediction history
+- [x] API retry request lỗi
+- [x] API health check
 
 **6.2 Dashboard**
 
 - [x] Dashboard throughput theo thời gian
 - [ ] Dashboard latency từng stage
-- [ ] Dashboard error distribution
+- [x] Dashboard error distribution
 - [x] Dashboard số lượng request theo trạng thái
 - [x] Dashboard recent predictions
 
 **6.3 Auth và access control (nếu cần)**
 
-- [ ] Basic authentication cho nội bộ
-- [ ] Role phân quyền viewer/operator/admin
-- [ ] Audit log cho thao tác retry
+- [x] Basic authentication cho nội bộ
+- [x] Role phân quyền viewer/operator/admin
+- [x] Audit log cho thao tác retry
 
 #### Deliverable
 
@@ -801,12 +801,12 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 - [ ] Centralized logging
 - [ ] Metric collection cho Kafka/Spark/Cassandra/RabbitMQ
 - [ ] Alert rule cho lag, error rate, node down
-- [ ] Trace request_id xuyên suốt pipeline
+- [x] Trace request_id xuyên suốt pipeline
 
 **7.2 Functional testing**
 
-- [ ] Test input hợp lệ
-- [ ] Test input lỗi
+- [x] Test input hợp lệ
+- [x] Test input lỗi
 - [ ] Test duplicate event
 - [ ] Test retry path
 - [ ] Test DLQ path
@@ -852,7 +852,7 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 **8.2 Documentation**
 
-- [ ] Viết README tổng
+- [x] Viết README tổng
 - [ ] Viết runbook vận hành
 - [ ] Viết playbook xử lý lỗi
 - [ ] Viết tài liệu schema và query pattern Cassandra
@@ -887,11 +887,11 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 ### Task
 
 - [ ] phân tích data source CAFA-6
-- [ ] chuẩn hóa event schema
-- [ ] dựng replay generator
-- [ ] xây Spark ingestion
-- [ ] xây validation/dedup stage
-- [ ] tích hợp ghi Cassandra
+- [x] chuẩn hóa event schema
+- [x] dựng replay generator
+- [x] xây Spark ingestion
+- [x] xây validation/dedup stage
+- [x] tích hợp ghi Cassandra
 - [ ] benchmark pipeline throughput
 
 ## 10.2 Team ML / Data Science
@@ -904,13 +904,13 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 ### Task
 
-- [ ] review solution competition
-- [ ] tái hiện baseline offline
-- [ ] chuẩn hóa preprocess
-- [ ] đóng gói inference module
-- [ ] benchmark latency
-- [ ] xác định ngưỡng post-processing
-- [ ] tài liệu hóa model_version và feature_version
+- [x] review solution competition
+- [x] tái hiện baseline offline
+- [x] chuẩn hóa preprocess
+- [x] đóng gói inference module
+- [x] benchmark latency
+- [x] xác định ngưỡng post-processing
+- [x] tài liệu hóa model_version và feature_version
 
 ## 10.3 Team Backend / Platform
 
@@ -924,12 +924,12 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 ### Task
 
-- [ ] thiết kế REST/gRPC API
-- [ ] xây service request tracking
-- [ ] tích hợp RabbitMQ cho retry/control
-- [ ] xây repository Cassandra
-- [ ] triển khai health check và audit
-- [ ] viết retry/reprocess endpoint
+- [x] thiết kế REST/gRPC API
+- [x] xây service request tracking
+- [x] tích hợp RabbitMQ cho retry/control
+- [x] xây repository Cassandra
+- [x] triển khai health check và audit
+- [x] viết retry/reprocess endpoint
 
 ## 10.4 Team DevOps / SRE
 
@@ -962,7 +962,7 @@ Mỗi lớp cần interface rõ ràng để Spark hoặc service gọi được.
 
 - [ ] viết test case theo từng stage
 - [ ] test duplicate/retry/DLQ
-- [ ] test API serving
+- [x] test API serving
 - [ ] test under load
 - [ ] test failover scenario
 
@@ -984,51 +984,51 @@ Dưới đây là backlog rất nhỏ, có thể đưa vào Jira/Trello.
 
 ### Epic B - Competition solution analysis
 
-- [ ] B1. Tìm 3 solution khả thi
-- [ ] B2. Đọc dependency từng solution
-- [ ] B3. So sánh mức độ nặng inference
-- [ ] B4. Chọn solution chính
-- [ ] B5. Viết tài liệu I/O contract của solution
-- [ ] B6. Tạo baseline inference script
+- [x] B1. Tìm 3 solution khả thi
+- [x] B2. Đọc dependency từng solution
+- [x] B3. So sánh mức độ nặng inference
+- [x] B4. Chọn solution chính
+- [x] B5. Viết tài liệu I/O contract của solution
+- [x] B6. Tạo baseline inference script
 
 ### Epic C - Event contract
 
-- [ ] C1. Định nghĩa raw_input schema
+- [x] C1. Định nghĩa raw_input schema
 - [ ] C2. Định nghĩa validated_input schema
-- [ ] C3. Định nghĩa prediction_output schema
+- [x] C3. Định nghĩa prediction_output schema
 - [ ] C4. Định nghĩa DLQ schema
 - [ ] C5. Định nghĩa error code catalog
-- [ ] C6. Viết contract document
+- [x] C6. Viết contract document
 
 ### Epic D - Kafka backbone
 
-- [ ] D1. Tạo topic raw_protein_input
-- [ ] D2. Tạo topic validated_protein_input
-- [ ] D3. Tạo topic inference_request
-- [ ] D4. Tạo topic prediction_result
-- [ ] D5. Tạo topic dead_letter
-- [ ] D6. Viết producer config
-- [ ] D7. Viết consumer config
+- [x] D1. Tạo topic raw_protein_input
+- [x] D2. Tạo topic validated_protein_input
+- [x] D3. Tạo topic inference_request
+- [x] D4. Tạo topic prediction_result
+- [x] D5. Tạo topic dead_letter
+- [x] D6. Viết producer config
+- [x] D7. Viết consumer config
 - [ ] D8. Test throughput topic input
 
 ### Epic E - RabbitMQ control plane
 
-- [ ] E1. Tạo exchange command_exchange
-- [ ] E2. Tạo queue retry_inference
-- [ ] E3. Tạo queue notification_queue
-- [ ] E4. Tạo routing key convention
-- [ ] E5. Viết retry consumer
-- [ ] E6. Test ack/nack behavior
+- [x] E1. Tạo exchange command_exchange
+- [x] E2. Tạo queue retry_inference
+- [x] E3. Tạo queue notification_queue
+- [x] E4. Tạo routing key convention
+- [x] E5. Viết retry consumer
+- [x] E6. Test ack/nack behavior
 
 ### Epic F - Cassandra foundation
 
-- [ ] F1. Tạo keyspace protein_rt
-- [ ] F2. Tạo bảng raw_protein_events
-- [ ] F3. Tạo bảng request_status_by_id
-- [ ] F4. Tạo bảng latest_prediction_by_protein
-- [ ] F5. Tạo bảng prediction_history_by_protein
-- [ ] F6. Tạo bảng failed_requests_by_time
-- [ ] F7. Tạo bảng pipeline_metrics_by_window
+- [x] F1. Tạo keyspace protein_rt
+- [x] F2. Tạo bảng raw_protein_events
+- [x] F3. Tạo bảng request_status_by_id
+- [x] F4. Tạo bảng latest_prediction_by_protein
+- [x] F5. Tạo bảng prediction_history_by_protein
+- [x] F6. Tạo bảng failed_requests_by_time
+- [x] F7. Tạo bảng pipeline_metrics_by_window
 - [ ] F8. Viết seed/test data script
 - [ ] F9. Benchmark ghi 10k/100k rows
 - [ ] F10. Benchmark query latest prediction
@@ -1038,50 +1038,50 @@ Dưới đây là backlog rất nhỏ, có thể đưa vào Jira/Trello.
 - [x] F2.1. Thêm service PostgreSQL vào Docker Compose
 - [x] F2.2. Tạo schema metadata ban đầu
 - [ ] F2.3. Thiết kế bảng user/role/permission
-- [ ] F2.4. Thiết kế bảng model registry đầy đủ
-- [ ] F2.5. Thiết kế bảng dataset/replay campaign đầy đủ
+- [x] F2.4. Thiết kế bảng model registry đầy đủ
+- [x] F2.5. Thiết kế bảng dataset/replay campaign đầy đủ
 - [ ] F2.6. Viết migration bằng Alembic
-- [ ] F2.7. Tích hợp Serving API với PostgreSQL
+- [x] F2.7. Tích hợp Serving API với PostgreSQL
 - [ ] F2.8. Viết integration test cho PostgreSQL repository
 
 ### Epic G - Spark streaming pipeline
 
-- [ ] G1. Tạo Spark project skeleton
-- [ ] G2. Đọc stream từ Kafka
-- [ ] G3. Parse raw JSON
-- [ ] G4. Validate required fields
-- [ ] G5. Validate amino acid sequence
-- [ ] G6. Deduplicate theo request_id
-- [ ] G7. Ghi raw events vào Cassandra
-- [ ] G8. Gọi feature builder
-- [ ] G9. Gọi predictor
-- [ ] G10. Post-process output
-- [ ] G11. Ghi prediction vào Cassandra
-- [ ] G12. Ghi status update vào Cassandra
-- [ ] G13. Ghi metrics theo time window
-- [ ] G14. Ghi lỗi vào DLQ
+- [x] G1. Tạo Spark project skeleton
+- [x] G2. Đọc stream từ Kafka
+- [x] G3. Parse raw JSON
+- [x] G4. Validate required fields
+- [x] G5. Validate amino acid sequence
+- [x] G6. Deduplicate theo request_id
+- [x] G7. Ghi raw events vào Cassandra
+- [x] G8. Gọi feature builder
+- [x] G9. Gọi predictor
+- [x] G10. Post-process output
+- [x] G11. Ghi prediction vào Cassandra
+- [x] G12. Ghi status update vào Cassandra
+- [x] G13. Ghi metrics theo time window
+- [x] G14. Ghi lỗi vào DLQ
 
 ### Epic H - Inference package
 
-- [ ] H1. Chuẩn hóa preprocess function
-- [ ] H2. Chuẩn hóa feature function
+- [x] H1. Chuẩn hóa preprocess function
+- [x] H2. Chuẩn hóa feature function
 - [ ] H3. Tải model artifact
-- [ ] H4. Viết predict() interface
-- [ ] H5. Viết postprocess() interface
-- [ ] H6. Test với sample protein
+- [x] H4. Viết predict() interface
+- [x] H5. Viết postprocess() interface
+- [x] H6. Test với sample protein
 - [ ] H7. Benchmark batch inference
-- [ ] H8. Gắn model_version vào output
+- [x] H8. Gắn model_version vào output
 
 ### Epic I - Serving API
 
-- [ ] I1. API create inference request
-- [ ] I2. API get request status
-- [ ] I3. API get latest prediction
-- [ ] I4. API get prediction history
-- [ ] I5. API list failed requests
-- [ ] I6. API retry request
-- [ ] I7. API health check
-- [ ] I8. API metrics endpoint
+- [x] I1. API create inference request
+- [x] I2. API get request status
+- [x] I3. API get latest prediction
+- [x] I4. API get prediction history
+- [x] I5. API list failed requests
+- [x] I6. API retry request
+- [x] I7. API health check
+- [x] I8. API metrics endpoint
 
 ### Epic J - Monitoring & Ops
 
@@ -1262,17 +1262,17 @@ Nếu mục tiêu là xây dựng **hệ thống Big Data realtime** cho dự đ
 ### Sprint 1
 
 - [ ] Data team: profiling CAFA-6 + chuẩn hóa event schema
-- [ ] ML team: chọn 1 solution competition + chạy baseline offline
-- [ ] Backend team: dựng skeleton API + request tracking
+- [x] ML team: chọn 1 solution competition + chạy baseline offline
+- [x] Backend team: dựng skeleton API + request tracking
 - [x] Platform team: Docker Compose cho Kafka/RabbitMQ/Cassandra/PostgreSQL/Spark
-- [ ] Data engineering: replay service phát stream từ CAFA-6
-- [ ] Backend + data engineering: thiết kế Cassandra schema v1
+- [x] Data engineering: replay service phát stream từ CAFA-6
+- [x] Backend + data engineering: thiết kế Cassandra schema v1
 
 ### Sprint 2
 
-- [ ] Spark đọc Kafka và validate event
-- [ ] Ghi raw events và request status vào Cassandra
-- [ ] Đóng gói inference module v1
+- [x] Spark đọc Kafka và validate event
+- [x] Ghi raw events và request status vào Cassandra
+- [x] Đóng gói inference module v1
 - [x] API lấy request status và latest prediction bằng CAFA-6 Modal endpoint trên sequence thật
 - [x] Dashboard throughput + error rate cơ bản
 - [x] Script stress test gửi nhiều file sequence đồng thời vào Serving API thật

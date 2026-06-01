@@ -101,12 +101,24 @@ services:
     depends_on:
       cassandra-init:
         condition: service_completed_successfully
+    env_file:
+      - ../../.env
+      - ../../cafa6_modal/.env
     ports:
       - "8002:8002"
     environment:
       CASSANDRA_HOSTS: cassandra
       CASSANDRA_PORT: 9042
       CASSANDRA_KEYSPACE: protein_rt
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-before-shipping}
+      JWT_EXPIRES_SECONDS: ${JWT_EXPIRES_SECONDS:-3600}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      USER_STORE_PATH: ${USER_STORE_PATH:-tmp/auth_users.json}
+      CAFA6_STREAM_BATCH_SIZE: ${CAFA6_STREAM_BATCH_SIZE:-1}
+      CAFA6_STREAM_TIMEOUT_SECONDS: ${CAFA6_STREAM_TIMEOUT_SECONDS:-900}
+      CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
+      CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-60}
     restart: unless-stopped
 
   spark-streaming:

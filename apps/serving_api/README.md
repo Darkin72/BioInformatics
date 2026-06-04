@@ -1,8 +1,8 @@
-# API phục vụ
+# Serving API
 
-Service tra cứu request status, latest prediction và prediction history từ Cassandra.
+Service này phục vụ tra cứu request status, latest prediction và prediction history từ Cassandra. Nó cũng xử lý JWT auth, tài khoản admin và các endpoint dashboard.
 
-Trong giai đoạn hiện tại, code phân tích thật chạy ở CAFA-6 Modal endpoint nằm ngoài repo này. Endpoint `POST /api/inference-requests` gọi URL cấu hình qua `CAFA6_PREDICT_URL`, gửi sequence thật của user và map response `predictions` về latest prediction của hệ thống.
+Trong giai đoạn hiện tại, phần phân tích thật chạy ở CAFA-6 Modal endpoint nằm ngoài repo này. Endpoint `POST /api/inference-requests` gọi URL cấu hình qua `CAFA6_PREDICT_URL`, gửi sequence thật của user và map response `predictions` về latest prediction của hệ thống.
 
 ## Xác thực JWT
 
@@ -18,7 +18,7 @@ Role demo:
 - `operator/operator123`: có quyền viewer và tạo inference request.
 - `admin/admin123`: toàn quyền hiện có.
 
-Biến môi trường:
+## Biến môi trường
 
 - `JWT_SECRET`: khóa ký JWT, cần đổi khi chạy môi trường thật.
 - `JWT_EXPIRES_SECONDS`: thời gian sống token, mặc định `3600`.

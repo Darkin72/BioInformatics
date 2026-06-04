@@ -1,43 +1,43 @@
 # CAFA-6 Modal Endpoint
 
-Serve the trained CAFA-6 ensemble as a Modal GPU endpoint.
+Thư mục này phục vụ ensemble CAFA-6 đã huấn luyện dưới dạng Modal GPU endpoint.
 
-There are two ways to use this folder:
+Có hai cách sử dụng:
 
-- Use the already deployed demo endpoint and send sequences to it.
-- Create your own Modal account, upload artifacts, and deploy your own endpoint.
+- Dùng demo endpoint đã deploy sẵn và gửi sequence tới endpoint đó.
+- Tạo tài khoản Modal riêng, upload artifact và deploy endpoint riêng.
 
-## 0. Endpoint config
+## Cấu hình endpoint
 
-Endpoint URLs live in `cafa6_modal/.env`. Start from the example file:
+URL endpoint nằm trong `cafa6_modal/.env`. Bắt đầu từ file ví dụ:
 
 ```bash
 cp cafa6_modal/.env.example cafa6_modal/.env
 ```
 
-The client script reads `cafa6_modal/.env` automatically. You can also override URLs from the command line with `--health-url` and `--predict-url`.
+Client script tự đọc `cafa6_modal/.env`. Bạn cũng có thể override URL từ command line bằng `--health-url` và `--predict-url`.
 
-## Quick use existing endpoint
+## Dùng nhanh endpoint có sẵn
 
-Install the client dependency:
+Cài dependency cho client:
 
 ```bash
 pip install requests
 ```
 
-Create `.env` from the checked-in example:
+Tạo `.env` từ file ví dụ trong repo:
 
 ```bash
 cp cafa6_modal/.env.example cafa6_modal/.env
 ```
 
-Call the deployed endpoint:
+Gọi endpoint đã deploy:
 
 ```bash
 python cafa6_modal/scripts/call_deployed_endpoint.py
 ```
 
-Call with one custom sequence:
+Gọi với một sequence tùy chỉnh:
 
 ```bash
 python cafa6_modal/scripts/call_deployed_endpoint.py \
@@ -46,7 +46,7 @@ python cafa6_modal/scripts/call_deployed_endpoint.py \
   --top-k 20
 ```
 
-Call with multiple sequences in one request:
+Gọi nhiều sequence trong một request:
 
 ```bash
 python cafa6_modal/scripts/call_deployed_endpoint.py \
@@ -55,7 +55,7 @@ python cafa6_modal/scripts/call_deployed_endpoint.py \
   --sequence GAVLILKKKGHHEAELKPLAQSHATKHKIPIKYLEFISEAIIHVLHSR
 ```
 
-Expected output is JSON with `predictions`, `records`, and `model` fields. The `predictions` rows mirror the notebook output table:
+Output kỳ vọng là JSON có các field `predictions`, `records` và `model`. Các row trong `predictions` phản ánh bảng output của notebook:
 
 ```json
 {
@@ -68,22 +68,24 @@ Expected output is JSON with `predictions`, `records`, and `model` fields. The `
 }
 ```
 
-## 1. Install and login
+## Cài đặt và đăng nhập Modal
 
-Use these steps if you do not have a Modal endpoint yet and want to deploy your own.
+Dùng các bước này nếu bạn chưa có Modal endpoint và muốn deploy endpoint riêng.
 
-### Folder cafa6_high_performance_artifacts can be found at:
+Artifact `cafa6_high_performance_artifacts` có thể tải tại:
 
+```text
 https://drive.google.com/drive/folders/1DoFUaywdEyFdZJVyRK9i5X1G6D3x5j1S?usp=sharing
+```
 
 ```bash
 pip install modal
 modal setup
 ```
 
-## 2. Upload artifacts
+## Upload artifact
 
-The endpoint expects this path inside the Modal Volume:
+Endpoint cần cấu trúc này trong Modal Volume:
 
 ```text
 /cafa6_high_performance_artifacts/
@@ -97,52 +99,51 @@ The endpoint expects this path inside the Modal Volume:
   cafa6_high_performance_models.pt
 ```
 
-Upload only the files needed for serving from the repo root. The script skips large
-training/validation `.npy` embedding files because the endpoint does not use them.
+Chỉ upload các file cần cho serving từ root repo. Script bỏ qua các file embedding `.npy` lớn dùng cho training/validation vì endpoint không dùng chúng.
 
 ```bash
 bash cafa6_modal/scripts/upload_artifacts.sh ./cafa6_high_performance_artifacts
 ```
 
-## 3. Develop locally against Modal
+## Phát triển local với Modal
 
 ```bash
 modal serve cafa6_modal/modal_app.py
 ```
 
-or
+Hoặc:
 
 ```bash
 bash cafa6_modal/scripts/deploy.sh
 ```
 
-## 4. Deploy
+## Deploy
 
 ```bash
 bash cafa6_modal/scripts/deploy.sh
 ```
 
-Modal prints two URLs:
+Modal in ra hai URL:
 
-- `cafa6-health`: GET health check.
-- `cafa6-predict`: POST inference endpoint.
+- `cafa6-health`: endpoint `GET` để kiểm tra health.
+- `cafa6-predict`: endpoint `POST` để inference.
 
-Copy the printed URLs into `cafa6_modal/.env`:
+Copy hai URL đó vào `cafa6_modal/.env`:
 
 ```env
 CAFA6_HEALTH_URL=https://your-workspace--cafa6-health.modal.run
 CAFA6_PREDICT_URL=https://your-workspace--cafa6-predict.modal.run
 ```
 
-Then call your endpoint:
+Sau đó gọi endpoint:
 
 ```bash
 python cafa6_modal/scripts/call_deployed_endpoint.py
 ```
 
-## 5. Direct HTTP call
+## Gọi HTTP trực tiếp
 
-You can call the predict URL directly from any backend/frontend:
+Bạn có thể gọi predict URL trực tiếp từ backend hoặc frontend:
 
 ```bash
 curl -X POST "https://your-workspace--cafa6-predict.modal.run" \
@@ -159,7 +160,7 @@ curl -X POST "https://your-workspace--cafa6-predict.modal.run" \
   }'
 ```
 
-If you want to use values from `.env` in your shell:
+Nếu muốn dùng giá trị từ `.env` trong shell:
 
 ```bash
 set -a
@@ -186,7 +187,7 @@ curl -X POST "$CAFA6_PREDICT_URL" \
 }
 ```
 
-You can also send a single sequence:
+Bạn cũng có thể gửi một sequence đơn:
 
 ```json
 {
@@ -197,7 +198,7 @@ You can also send a single sequence:
 
 ## Response
 
-The response mirrors the notebook prediction table, returned as JSON:
+Response phản ánh bảng prediction trong notebook, trả về dưới dạng JSON:
 
 ```json
 {
@@ -230,24 +231,24 @@ The response mirrors the notebook prediction table, returned as JSON:
 
 ## Scaling
 
-`modal_app.py` is configured for demo traffic:
+`modal_app.py` được cấu hình cho demo traffic:
 
-- `gpu="T4"` keeps cost low.
-- `max_containers=4` lets Modal scale horizontally under concurrent traffic.
-- `buffer_containers=1` keeps one extra warm container while active.
-- `scaledown_window=300` keeps idle containers alive briefly to reduce cold starts.
-- Each request accepts up to 64 sequences. Send larger jobs as multiple requests.
+- `gpu="T4"` giúp giữ chi phí thấp.
+- `max_containers=4` cho phép Modal scale ngang khi có nhiều request đồng thời.
+- `buffer_containers=1` giữ thêm một container warm khi endpoint đang active.
+- `scaledown_window=300` giữ container idle trong thời gian ngắn để giảm cold start.
+- Mỗi request nhận tối đa 64 sequence. Với job lớn hơn, hãy chia thành nhiều request.
 
-Increase `max_containers` for more concurrent users. Increase `min_containers` only during a live demo if you need a permanently warm endpoint, because warm GPU containers cost credits.
+Tăng `max_containers` nếu cần nhiều user đồng thời hơn. Chỉ tăng `min_containers` trong demo live nếu cần endpoint luôn warm, vì GPU container warm vẫn tốn credit.
 
-## Cost notes
+## Ghi chú chi phí
 
-Modal is serverless. For this endpoint, cost mainly comes from:
+Modal là serverless. Với endpoint này, chi phí chủ yếu đến từ:
 
-- GPU time while a container is starting, loading models, processing requests, or staying warm.
-- CPU and memory time for the same active/warm container period.
-- Storage for Volumes, if applicable to your plan and usage.
+- Thời gian GPU khi container khởi động, load model, xử lý request hoặc giữ warm.
+- Thời gian CPU và memory trong cùng giai đoạn active/warm.
+- Lưu trữ Volume, tùy plan và mức sử dụng.
 
-The current config uses `scaledown_window=30`, so after a request Modal may keep the GPU container around for up to about half a minute to avoid another cold start. That improves demo latency but can spend credits while the container is idle. Set it lower if you want to minimize cost, or set `min_containers=1` only during a live demo if you want the endpoint always warm.
+Cấu hình hiện tại dùng `scaledown_window=30`, nên sau một request Modal có thể giữ GPU container khoảng nửa phút để tránh cold start tiếp theo. Điều này cải thiện latency demo nhưng có thể tốn credit khi container idle. Giảm giá trị này nếu muốn tối thiểu chi phí, hoặc chỉ đặt `min_containers=1` trong demo live nếu cần endpoint luôn warm.
 
-As of April 29, 2026, Modal's official pricing page lists Starter as `$0` with `$30/month` free compute credit, and T4 GPU at `$0.000164/sec` before CPU/memory charges. Check the live pricing page before relying on these numbers: https://modal.com/pricing
+Tại ngày 29 tháng 4 năm 2026, trang pricing chính thức của Modal liệt kê gói Starter là `$0` với `$30/tháng` free compute credit, và T4 GPU ở mức `$0.000164/giây` trước khi tính CPU/memory. Hãy kiểm tra trang pricing live trước khi dựa vào các con số này: https://modal.com/pricing

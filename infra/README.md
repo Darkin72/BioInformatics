@@ -1,11 +1,12 @@
-# Infrastructure
+# Hạ tầng
 
-Nơi đặt các file Docker Compose, bootstrap script và schema cho môi trường local/dev.
+Hạ tầng local/dev hiện nằm trong các manifest Kubernetes tại [k8s](k8s).
 
-```bash
-docker compose -f infra/docker/docker-compose.yml up -d --build
+```powershell
+.\scripts\k8s-build-images.ps1
+kubectl apply -k infra/k8s
 ```
 
-Stack gồm Kafka, RabbitMQ management UI, Cassandra, ingestion API, serving API và Spark streaming container. Compose tự tạo Kafka topics và chạy `infra/cassandra/schema.cql` khi Cassandra sẵn sàng.
+Stack Kubernetes chạy Kafka, RabbitMQ, PostgreSQL, Cassandra, Spark, các backend service, worker, frontend và các bootstrap Job để tạo Kafka topic/Cassandra schema.
 
-Runbook đầy đủ: [docs/runbook.md](/Users/duongminhquan/Documents/BioInformatics/docs/runbook.md).
+Các file Docker Compose cũ vẫn được giữ lại làm tham chiếu legacy trong [docker](docker) và ở root repo.

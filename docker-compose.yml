@@ -1,3 +1,5 @@
+# Legacy Docker Compose stack. The active local Kubernetes stack is in infra/k8s.
+# Build images with scripts/k8s-build-images.ps1, then deploy with kubectl apply -k infra/k8s.
 name: ${COMPOSE_PROJECT_NAME:-bioinformatics}
 
 services:

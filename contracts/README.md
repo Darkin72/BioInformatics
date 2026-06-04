@@ -1,6 +1,6 @@
 # Data contract
 
-Thư mục này lưu event schema và tài liệu contract giữa producer-consumer.
+Thư mục này lưu event schema và tài liệu contract giữa producer/consumer.
 
 Các schema hiện có:
 

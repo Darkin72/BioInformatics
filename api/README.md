@@ -7,7 +7,7 @@ Có hai cách sử dụng:
 - Dùng demo endpoint đã deploy sẵn và gửi protein sequence tới endpoint đó.
 - Tạo tài khoản Modal riêng, upload artifact và deploy endpoint riêng.
 
-## 0. Cấu hình endpoint
+## Cấu hình endpoint
 
 URL endpoint nằm trong `cafa6_modal/.env`. Bắt đầu từ file ví dụ:
 
@@ -23,12 +23,6 @@ Cài dependency cho client:
 
 ```bash
 pip install requests
-```
-
-Tạo `.env` từ file ví dụ đã có trong repo:
-
-```bash
-cp cafa6_modal/.env.example cafa6_modal/.env
 ```
 
 Gọi endpoint đã deploy:
@@ -68,22 +62,22 @@ Output kỳ vọng là JSON có các field `predictions`, `records` và `model`.
 }
 ```
 
-## 1. Cài đặt và đăng nhập
+## Cài đặt và đăng nhập Modal
 
 Dùng các bước này nếu bạn chưa có Modal endpoint và muốn deploy endpoint riêng.
 
-### Thư mục `cafa6_high_performance_artifacts`
-
 Artifact có thể tải tại:
 
+```text
 https://drive.google.com/drive/folders/1DoFUaywdEyFdZJVyRK9i5X1G6D3x5j1S?usp=sharing
+```
 
 ```bash
 pip install modal
 modal setup
 ```
 
-## 2. Upload artifact
+## Upload artifact
 
 Endpoint cần cấu trúc này trong Modal Volume:
 
@@ -105,19 +99,19 @@ Chỉ upload các file cần cho serving từ root repo. Script bỏ qua các fi
 bash cafa6_modal/scripts/upload_artifacts.sh ./cafa6_high_performance_artifacts
 ```
 
-## 3. Phát triển local với Modal
+## Phát triển local với Modal
 
 ```bash
 modal serve cafa6_modal/modal_app.py
 ```
 
-Hoặc:
+Hoặc deploy trực tiếp:
 
 ```bash
 bash cafa6_modal/scripts/deploy.sh
 ```
 
-## 4. Deploy
+## Deploy
 
 ```bash
 bash cafa6_modal/scripts/deploy.sh
@@ -141,7 +135,7 @@ Sau đó gọi endpoint:
 python cafa6_modal/scripts/call_deployed_endpoint.py
 ```
 
-## 5. Gọi HTTP trực tiếp
+## Gọi HTTP trực tiếp
 
 Bạn có thể gọi predict URL trực tiếp từ backend hoặc frontend:
 

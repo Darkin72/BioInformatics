@@ -1,26 +1,26 @@
 # CAFA-6 Modal Streaming Endpoint
 
-This package serves the CAFA-6 ensemble through a separate Modal app with both JSON and SSE batch-streaming APIs.
+Package này phục vụ ensemble CAFA-6 qua một Modal app riêng, có cả JSON API và SSE batch-streaming API.
 
-See the full documentation:
+Tài liệu đầy đủ:
 
 ```text
 docs/cafa6_modal_streaming.md
 ```
 
-Input/output focused API documentation:
+Tài liệu API tập trung vào input/output:
 
 ```text
 docs/cafa6_streaming_api_io.md
 ```
 
-Deploy:
+## Deploy
 
 ```bash
 bash cafa6_modal_streaming/scripts/deploy.sh
 ```
 
-Call the SSE endpoint:
+## Gọi SSE endpoint
 
 ```bash
 python cafa6_modal_streaming/scripts/call_streaming_endpoint.py \

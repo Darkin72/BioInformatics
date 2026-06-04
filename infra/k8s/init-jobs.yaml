@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: kafka-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-init
+          image: apache/kafka:4.2.0
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/create-topics.sh"]
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+          volumeMounts:
+            - name: kafka-create-topics
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: kafka-create-topics
+          configMap:
+            name: kafka-create-topics
+            defaultMode: 0755
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cassandra-init
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: cassandra-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: cassandra-init
+          image: cassandra:5.0
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/init-schema.sh"]
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+          volumeMounts:
+            - name: cassandra-init-script
+              mountPath: /scripts
+              readOnly: true
+            - name: cassandra-schema
+              mountPath: /schema.cql
+              subPath: schema.cql
+              readOnly: true
+      volumes:
+        - name: cassandra-init-script
+          configMap:
+            name: cassandra-init-script
+            defaultMode: 0755
+        - name: cassandra-schema
+          configMap:
+            name: cassandra-schema

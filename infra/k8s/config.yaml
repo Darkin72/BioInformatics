@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bioinformatics-config
+data:
+  HOST: "0.0.0.0"
+  PORT: "8000"
+  JWT_EXPIRES_SECONDS: "3600"
+  CORS_ALLOWED_ORIGINS: "http://localhost:30174,http://127.0.0.1:30174,http://localhost:5174,http://127.0.0.1:5174"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_RAW_INPUT_TOPIC: "protein.raw-input.v1"
+  KAFKA_VALIDATED_INPUT_TOPIC: "protein.validated-input.v1"
+  KAFKA_REQUEST_STATUS_TOPIC: "request_status"
+  KAFKA_PREDICTION_TOPIC: "prediction_result"
+  KAFKA_DEAD_LETTER_TOPIC: "dead_letter"
+  RABBITMQ_EXCHANGE: "command_exchange"
+  RABBITMQ_INFERENCE_QUEUE: "inference_jobs"
+  RABBITMQ_RETRY_QUEUE: "retry_inference"
+  RABBITMQ_NOTIFICATION_QUEUE: "notification_queue"
+  CASSANDRA_HOST: "cassandra"
+  CASSANDRA_HOSTS: "cassandra"
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_KEYSPACE: "protein_rt"
+  POSTGRES_DB: "protein_metadata"
+  POSTGRES_USER: "protein"
+  ADMIN_USERNAME: "admin"
+  CAFA6_HEALTH_URL: ""
+  CAFA6_PREDICT_URL: ""
+  CAFA6_GRAPH_AWARE_PREDICT_SSE_URL: ""
+  CAFA6_STREAM_PREDICT_SSE_URL: ""
+  CAFA6_STREAM_BATCH_SIZE: "400"
+  CAFA6_STREAM_TIMEOUT_SECONDS: "900"
+  CAFA6_TOP_K: "20"
+  CAFA6_TIMEOUT_SECONDS: "60"
+  USER_STORE_PATH: "/app/tmp/auth_users.json"
+  INFERENCE_WORKER_CONCURRENCY: "4"
+  INFERENCE_WORKER_PREFETCH: "4"
+  INFERENCE_WORKER_RABBITMQ_HEARTBEAT: "0"
+  INFERENCE_WORKER_BLOCKED_CONNECTION_TIMEOUT: "1800"
+  SPARK_MASTER_URL: "spark://spark-master:7077"
+  VITE_API_BASE_URL: "http://localhost:8001"
+  VITE_EVENTS_BASE_URL: "http://localhost:8004"
+  CHOKIDAR_USEPOLLING: "true"
+  WATCHPACK_POLLING: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bioinformatics-secret
+type: Opaque
+stringData:
+  JWT_SECRET: "dev-local-change-before-shipping"
+  ADMIN_PASSWORD: "admin123"
+  POSTGRES_PASSWORD: "protein"
+  RABBITMQ_DEFAULT_USER: "protein"
+  RABBITMQ_DEFAULT_PASS: "protein"
+  RABBITMQ_ERLANG_COOKIE: "bioinformatics-local-rabbitmq-cookie"
+  DATABASE_URL: "postgresql://protein:protein@postgres:5432/protein_metadata"
+  RABBITMQ_URL: "amqp://protein:protein@rabbitmq:5672/"

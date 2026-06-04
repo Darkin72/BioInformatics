@@ -1,0 +1,461 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: serving-api
+spec:
+  type: NodePort
+  selector:
+    app: serving-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serving-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serving-api
+  template:
+    metadata:
+      labels:
+        app: serving-api
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("postgres", 5432), ("cassandra", 9042), ("kafka", 9092), ("rabbitmq", 5672)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: serving-api
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: app-tmp
+              mountPath: /app/tmp
+      volumes:
+        - name: app-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: replay-service
+spec:
+  type: NodePort
+  selector:
+    app: replay-service
+  ports:
+    - name: http
+      port: 8005
+      targetPort: 8005
+      nodePort: 30005
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replay-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: replay-service
+  template:
+    metadata:
+      labels:
+        app: replay-service
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("cassandra", 9042), ("kafka", 9092), ("rabbitmq", 5672)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: replay-service
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - apps.replay_service.src.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8005"
+          ports:
+            - containerPort: 8005
+              name: http
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: app-tmp
+              mountPath: /app/tmp
+      volumes:
+        - name: app-tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference-worker
+  template:
+    metadata:
+      labels:
+        app: inference-worker
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("rabbitmq", 5672), ("kafka", 9092), ("cassandra", 9042)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: inference-worker
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - apps.inference_worker.src.main
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retry-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retry-worker
+  template:
+    metadata:
+      labels:
+        app: retry-worker
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("rabbitmq", 5672), ("kafka", 9092), ("cassandra", 9042)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: retry-worker
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - apps.retry_worker.src.main
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  type: NodePort
+  selector:
+    app: notification-service
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+      nodePort: 30004
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("cassandra", 9042), ("kafka", 9092)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: notification-service
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - apps.notification_service.src.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8003"
+          ports:
+            - containerPort: 8003
+              name: http
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 5173
+      targetPort: 5173
+      nodePort: 30174
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      initContainers:
+        - name: wait-for-serving-api
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              deadline = time.time() + 600
+              while True:
+                  try:
+                      socket.create_connection(("serving-api", 8000), timeout=3).close()
+                      print("serving-api:8000 is reachable", flush=True)
+                      break
+                  except OSError:
+                      if time.time() > deadline:
+                          raise
+                      print("Waiting for serving-api:8000...", flush=True)
+                      time.sleep(5)
+      containers:
+        - name: frontend
+          image: bioinformatics/frontend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5173
+              name: http
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5173
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-streaming
+spec:
+  type: NodePort
+  selector:
+    app: spark-streaming
+  ports:
+    - name: web
+      port: 4040
+      targetPort: 4040
+      nodePort: 30040
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: bioinformatics/backend:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              targets = [("kafka", 9092), ("cassandra", 9042)]
+              deadline = time.time() + 600
+              for host, port in targets:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), timeout=3).close()
+                          print(f"{host}:{port} is reachable", flush=True)
+                          break
+                      except OSError:
+                          if time.time() > deadline:
+                              raise
+                          print(f"Waiting for {host}:{port}...", flush=True)
+                          time.sleep(5)
+      containers:
+        - name: spark-streaming
+          image: bioinformatics/spark-streaming:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4040
+              name: web
+          envFrom:
+            - configMapRef:
+                name: bioinformatics-config
+            - secretRef:
+                name: bioinformatics-secret

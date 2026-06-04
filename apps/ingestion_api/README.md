@@ -7,7 +7,7 @@ Service nhận dữ liệu protein từ API hoặc replay service và đẩy eve
 - `GET /health`
 - `POST /v1/proteins`
 
-Request:
+Request mẫu:
 
 ```json
 {
@@ -20,4 +20,6 @@ Request:
 }
 ```
 
-Service validate sequence, ghi `raw_protein_events` và `request_status_by_id` vào Cassandra, publish event sang Kafka topic `protein.raw-input.v1`, đồng thời gửi control event `request.accepted` sang RabbitMQ. `top_k` và `threshold` là optional; nếu có, Spark dùng các giá trị này khi gọi Modal endpoint cho request đó.
+Service validate sequence, ghi `raw_protein_events` và `request_status_by_id` vào Cassandra, publish event sang Kafka topic `protein.raw-input.v1`, đồng thời gửi control event `request.accepted` sang RabbitMQ.
+
+`top_k` và `threshold` là optional; nếu có, Spark dùng các giá trị này khi gọi Modal endpoint cho request đó.

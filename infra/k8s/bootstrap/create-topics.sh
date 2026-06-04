@@ -26,7 +26,8 @@ for topic in "${topics[@]}"; do
     --if-not-exists \
     --topic "${topic}" \
     --partitions 3 \
-    --replication-factor 1
+    --replication-factor 3 \
+    --config min.insync.replicas=2
 done
 
 "${KAFKA_TOPICS_BIN}" --bootstrap-server "${BOOTSTRAP_SERVER}" --list

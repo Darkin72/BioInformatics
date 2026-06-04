@@ -6,7 +6,6 @@ __pycache__
 .pytest_cache
 .ruff_cache
 .mypy_cache
-cafa6
 cafa6_high_performance_artifacts
 *.ipynb
 .env

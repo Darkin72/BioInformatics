@@ -12,6 +12,7 @@ COPY docs ./docs
 COPY libs ./libs
 COPY ml ./ml
 COPY jobs ./jobs
+COPY cafa6 ./cafa6
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir -e .

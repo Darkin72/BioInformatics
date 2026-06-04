@@ -1,30 +1,34 @@
-# README chay 360K request, 10 sequence/request
+# Chạy 360K request, 10 sequence/request
 
-Tai lieu nay huong dan chay benchmark submit API voi:
-- `360000` HTTP requests
-- moi request gom `10` sequence records (`records` payload)
-- tong cong `3,600,000` sequence records
+Tài liệu này hướng dẫn chạy benchmark submit API với:
 
-## 1) Dieu kien truoc khi chay
+- `360000` HTTP request.
+- Mỗi request gồm `10` sequence record trong payload `records`.
+- Tổng cộng `3,600,000` sequence record.
 
-1. Serving API dang chay, vi du:
+## Điều kiện trước khi chạy
+
+1. Serving API đang chạy. Với Kubernetes local, mở port-forward:
+
 ```powershell
-docker compose up -d --build
+kubectl -n bioinformatics port-forward svc/serving-api 8001:8000
 ```
 
-2. Co tai khoan de login API (`username`, `password`).
+2. Có tài khoản để login API (`username`, `password`).
 
-3. Co Python de chay script:
+3. Có Python để chạy script:
+
 ```powershell
 python --version
 ```
 
-4. Cai dependency (bao gom `tqdm`):
+4. Cài dependency, bao gồm `tqdm`:
+
 ```powershell
 pip install -r requirements.txt
 ```
 
-## 2) Dry-run (kiem tra ke hoach, khong goi API)
+## Dry-run, kiểm tra kế hoạch và không gọi API
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -38,12 +42,13 @@ python scripts\stress_submit_sequences.py `
   --dry-run
 ```
 
-Ban se thay cac dong nhu:
+Bạn sẽ thấy các dòng như:
+
 - `Records per request: 10`
 - `Planned requests: 360000`
 - `Planned sequences: 3600000`
 
-## 3) Chay benchmark that
+## Chạy benchmark thật
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -62,17 +67,18 @@ python scripts\stress_submit_sequences.py `
   --password your_password
 ```
 
-## 4) Giai thich output
+## Giải thích output
 
-- `throughput_rps`: so request submit/giay.
-- `throughput_seq_per_sec`: so sequence/giay.
-- `failure_rate`: ti le request loi.
-- `checkpoint_360k_x10.jsonl`: moc progress theo thoi gian.
-- `summary_360k_x10.json`: ket qua tong hop cuoi run.
+- `throughput_rps`: số request submit/giây.
+- `throughput_seq_per_sec`: số sequence/giây.
+- `failure_rate`: tỉ lệ request lỗi.
+- `checkpoint_360k_x10.jsonl`: mốc progress theo thời gian.
+- `summary_360k_x10.json`: kết quả tổng hợp cuối run.
 
-## 5) Neu bi timeout hoac loi nhieu
+## Nếu bị timeout hoặc lỗi nhiều
 
-Thu theo thu tu:
-1. Giam `--concurrency` (vi du tu `64` xuong `32`).
-2. Tang `--timeout` (vi du `180`).
-3. Giam `--records-per-request` neu moi request dang gui qua nhieu sequence.
+Thử theo thứ tự:
+
+1. Giảm `--concurrency`, ví dụ từ `64` xuống `32`.
+2. Tăng `--timeout`, ví dụ `180`.
+3. Giảm `--records-per-request` nếu mỗi request đang gửi quá nhiều sequence.

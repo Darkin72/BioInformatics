@@ -1,15 +1,26 @@
-# Stack Docker local
+# Stack Docker local legacy
 
-Thư mục này chứa cấu hình Docker cho môi trường local/dev của dự án:
+Kubernetes hiện là stack local/dev ưu tiên của repo này. Từ root repo, dùng hướng dẫn tại [../infra/k8s/README.md](../infra/k8s/README.md):
 
-- `backend/Dockerfile`: đóng gói FastAPI Serving API.
-- `frontend/Dockerfile`: chạy React/Vite dev server bằng `npm run dev`.
-- `frontend/nginx.conf`: cấu hình SPA fallback cũ, không dùng trong compose dev hiện tại.
-- `kafka/create-topics.sh`: tạo các topic theo `task.md`.
+```powershell
+.\scripts\k8s-build-images.ps1
+kubectl apply -k infra/k8s
+```
+
+Các file Docker Compose vẫn được giữ lại làm tham chiếu legacy.
+
+## Nội dung thư mục
+
+- `backend/Dockerfile`: đóng gói FastAPI backend dùng cho Serving API, replay service và worker.
+- `frontend/Dockerfile`: đóng gói React/Vite dev server bằng `npm run dev`.
+- `frontend/nginx.conf`: cấu hình SPA fallback cũ, hiện không dùng trong stack dev.
+- `kafka/create-topics.sh`: tạo các topic Kafka cần thiết.
 - `cassandra/init-schema.sh`: nạp `infra/cassandra/schema.cql` vào Cassandra.
 - `postgres/init.sql`: tạo schema PostgreSQL ban đầu cho metadata/quản trị.
 
-Từ root repo, chạy các service chính:
+## Chạy Compose legacy
+
+Từ root repo:
 
 ```powershell
 docker compose up -d --build
@@ -24,7 +35,7 @@ docker compose run --rm cassandra-init
 
 Hai container init này sẽ tự bị xóa sau khi chạy xong vì dùng `--rm`.
 
-Sau khi stack sẵn sàng:
+## URL legacy
 
 - Frontend: http://localhost:5174
 - Serving API: http://localhost:8001
@@ -39,7 +50,7 @@ Sau khi stack sẵn sàng:
 - Kafka external bootstrap: `localhost:9093`
 - Cassandra CQL: `localhost:9043`
 
-Tài khoản demo của frontend/API:
+## Tài khoản demo
 
 | Tên đăng nhập | Mật khẩu |
 | --- | --- |
@@ -47,14 +58,14 @@ Tài khoản demo của frontend/API:
 | `operator` | `operator123` |
 | `admin` | `admin123` |
 
-Kiểm tra nhanh:
+## Kiểm tra nhanh
 
 ```powershell
 docker compose ps
 Invoke-RestMethod http://localhost:8001/health
 ```
 
-Dừng stack:
+## Dừng stack
 
 ```powershell
 docker compose down
@@ -68,13 +79,13 @@ docker compose down -v
 
 ## Notification service
 
-Stack local co them `notification-service` tren port `8003`.
+Stack local có thêm `notification-service` trên port `8003` trong container, expose ra host tại `8004`.
 
 - Consume Kafka topics: `request_status`, `prediction_result`, `dead_letter`.
 - Ghi Cassandra serving tables: `requests_by_day`, `requests_by_status_window`, `requests_by_user_window`, `request_timeline_by_id`, `prediction_history_by_protein`, `pipeline_metrics_by_window`.
-- Phat SSE cho frontend tai `http://localhost:8004/api/events/dashboard`.
+- Phát SSE cho frontend tại `http://localhost:8004/api/events/dashboard`.
 
-Kiem tra nhanh:
+Kiểm tra nhanh:
 
 ```powershell
 Invoke-RestMethod http://localhost:8004/health

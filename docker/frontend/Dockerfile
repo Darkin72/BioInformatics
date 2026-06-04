@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY frontend/package*.json ./
 RUN npm ci
+COPY frontend ./
 
 EXPOSE 5173
 

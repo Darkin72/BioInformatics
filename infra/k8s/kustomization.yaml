@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: default
+
+resources:
+  - config.yaml
+  - data-services.yaml
+  - init-jobs.yaml
+  - app-services.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: kafka-create-topics
+    files:
+      - create-topics.sh=bootstrap/create-topics.sh
+  - name: cassandra-init-script
+    files:
+      - init-schema.sh=bootstrap/init-schema.sh
+  - name: cassandra-schema
+    files:
+      - schema.cql=bootstrap/schema.cql
+  - name: postgres-init
+    files:
+      - 001-init.sql=bootstrap/001-init.sql

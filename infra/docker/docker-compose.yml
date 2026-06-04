@@ -1,3 +1,4 @@
+# Legacy Docker Compose stack. The active local Kubernetes stack is in ../k8s.
 services:
   kafka:
     image: apache/kafka:3.7.0

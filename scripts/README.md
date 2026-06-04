@@ -1,21 +1,18 @@
-﻿# Scripts van hanh
+# Script vận hành
 
-Thu muc nay chua cac script phuc vu dev, test va benchmark local.
+Thư mục này chứa các script phục vụ dev, test và benchmark local.
 
 ## Stress test submit sequence
 
-Script [stress_submit_sequences.py](stress_submit_sequences.py) dang nhap vao Serving API,
-gui dong thoi request den endpoint `/api/inference-requests`, doi tung request ve terminal
-status (`completed`, `failed`, `cancelled`), roi moi gui request tiep theo cho slot concurrent do.
-Throughput/latency vi vay la end-to-end, khong chi la thoi gian API accept request.
+Script [stress_submit_sequences.py](stress_submit_sequences.py) đăng nhập vào Serving API, gửi đồng thời request đến endpoint `/api/inference-requests`, đợi từng request về terminal status (`completed`, `failed`, `cancelled`) rồi mới gửi request tiếp theo cho slot concurrent đó. Throughput/latency vì vậy là end-to-end, không chỉ là thời gian API accept request.
 
-### Cai tqdm (thanh tien do)
+## Cài dependency
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-### Cach chay nhanh
+## Chạy nhanh
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -26,7 +23,7 @@ python scripts\stress_submit_sequences.py `
   --password admin123
 ```
 
-### Dry-run (khong goi API)
+## Dry-run, không gọi API
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -35,7 +32,7 @@ python scripts\stress_submit_sequences.py `
   --dry-run
 ```
 
-### Chay quy mo lon (khuyen nghi cho Big Data)
+## Chạy quy mô lớn
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -48,16 +45,16 @@ python scripts\stress_submit_sequences.py `
   --summary-output .\tmp\bench\summary_1m.json `
   --checkpoint-output .\tmp\bench\checkpoint_1m.jsonl `
   --no-result-log `
-  # --api-base-url http://localhost:8001 `
+  --api-base-url http://localhost:8001 `
   --username admin `
   --password admin123
 ```
 
-### Chay dung bai toan 360K request, moi request 10 sequence
+## Bài toán 360K request, 10 sequence/request
 
-Tong sequence duoc gui: `360000 * 10 = 3600000`.
+Tổng sequence được gửi: `360000 * 10 = 3600000`.
 
-1) Kiem tra plan truoc (khong goi API):
+Kiểm tra plan trước, không gọi API:
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -71,7 +68,7 @@ python scripts\stress_submit_sequences.py `
   --dry-run
 ```
 
-2) Chay that:
+Chạy thật:
 
 ```powershell
 python scripts\stress_submit_sequences.py `
@@ -90,56 +87,41 @@ python scripts\stress_submit_sequences.py `
   --password your_password
 ```
 
-## Tham so quan trong
+## Tham số quan trọng
 
-- `--total-requests`: tong so request can gui. Neu dat tham so nay thi `--repeat` bi bo qua.
-- `--records-per-request`: so sequence records trong moi HTTP request (`records` payload).
-- `--concurrency`: so request HTTP chay dong thoi. Mac dinh script giu dung N request dang bay, giong N user cung submit.
-- `--workers`: alias cu cua `--concurrency`.
-- `--max-inflight`: trong che do doi completed, gia tri cao hon `--concurrency` bi bo qua de khong gui them request truoc khi slot cu xong.
-- `--poll-interval`: so giay giua moi lan poll `/api/inference-requests/{request_id}`.
-- `--completion-timeout`: gioi han thoi gian doi mot request ve terminal status; `0` la khong gioi han.
-- `--no-start-gate`: tat start gate. Mac dinh bat de wave dau tien cua N request bat dau gan nhu cung luc.
-- `--wait-timeout`: tan suat kiem tra trang thai `inflight` (giay), giup phat hien run dang bi treo som hon.
-- `--stall-report-seconds`: neu khong co request nao hoan thanh trong N giay, script in heartbeat `[heartbeat]` (0 de tat).
-- `--no-result-log`: tat ghi tung request vao JSONL (rat can cho run 10M-100M).
-- `--summary-output`: ghi tong ket cuoi ky.
-- `--checkpoint-every`: in progress theo moc lon (vd 1,000,000 request).
-- `--checkpoint-output`: ghi cac moc progress ra JSONL de ve bieu do.
-- `--latency-sample-size`: kich thuoc reservoir de uoc luong p50/p95/p99 trong run lon.
-- `--no-tqdm`: tat thanh tien do `tqdm` neu can.
+- `--total-requests`: tổng số request cần gửi. Nếu đặt tham số này thì `--repeat` bị bỏ qua.
+- `--records-per-request`: số sequence record trong mỗi HTTP request (`records` payload).
+- `--concurrency`: số request HTTP chạy đồng thời. Mặc định script giữ đúng N request đang bay, giống N user cùng submit.
+- `--workers`: alias cũ của `--concurrency`.
+- `--max-inflight`: trong chế độ đợi completed, giá trị cao hơn `--concurrency` bị bỏ qua để không gửi thêm request trước khi slot cũ xong.
+- `--poll-interval`: số giây giữa mỗi lần poll `/api/inference-requests/{request_id}`.
+- `--completion-timeout`: giới hạn thời gian đợi một request về terminal status; `0` là không giới hạn.
+- `--no-start-gate`: tắt start gate. Mặc định bật để wave đầu tiên của N request bắt đầu gần như cùng lúc.
+- `--wait-timeout`: tần suất kiểm tra trạng thái `inflight`, giúp phát hiện run bị treo sớm hơn.
+- `--stall-report-seconds`: nếu không có request nào hoàn thành trong N giây, script in heartbeat `[heartbeat]`; đặt `0` để tắt.
+- `--no-result-log`: tắt ghi từng request vào JSONL, rất cần cho run 10M-100M.
+- `--summary-output`: ghi tổng kết cuối kỳ.
+- `--checkpoint-every`: in progress theo mốc lớn, ví dụ 1,000,000 request.
+- `--checkpoint-output`: ghi các mốc progress ra JSONL để vẽ biểu đồ.
+- `--latency-sample-size`: kích thước reservoir để ước lượng p50/p95/p99 trong run lớn.
+- `--no-tqdm`: tắt thanh tiến độ `tqdm` nếu cần.
 
-## Bien moi truong
+## Biến môi trường
 
-- `API_BASE_URL`: mac dinh `http://localhost:8001`.
+- `API_BASE_URL`: mặc định `http://localhost:8001`.
 
-## Reset du lieu request trong moi truong dev
+## Reset dữ liệu request trong môi trường dev
 
 ```powershell
 python scripts\clear_request_history.py --yes
 ```
 
-## Run
+## Ghi chú chạy với Kubernetes local
 
-# ingestion-api 8001, serving-api 8002
-docker compose -f infra/docker/docker-compose.yml up -d --build
+Khi dùng stack Kubernetes, mở Serving API bằng port-forward trước:
 
+```powershell
+kubectl -n bioinformatics port-forward svc/serving-api 8001:8000
+```
 
-python scripts\stress_submit_sequences.py `
-  --input-dir .\tmp\stress_sequences `
-  --api-base-url http://localhost:8002 `
-  --records-per-request 400 `
-  --total-requests 900 `
-  --concurrency 32 `
-  --username admin`
-  --password admin123
-
-
-python scripts\stress_submit_sequences.py `
-  --input-dir .\tmp\stress_sequences `
-  --api-base-url http://localhost:8002 `
-  --records-per-request 400 `
-  --total-requests 1 `
-  --concurrency 32 `
-  --username admin`
-  --password admin123
+Sau đó chạy stress test với `--api-base-url http://localhost:8001`.

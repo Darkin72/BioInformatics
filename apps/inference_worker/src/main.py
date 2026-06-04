@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import os
 import time
@@ -74,60 +75,101 @@ class InferenceWorker:
             queue=self._rabbit_config.inference_queue,
             routing_key="inference.submit",
         )
+        self._concurrency = max(1, int(os.getenv("INFERENCE_WORKER_CONCURRENCY", "4")))
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._concurrency,
+            thread_name_prefix="inference-job",
+        )
 
     def close(self) -> None:
+        self._executor.shutdown(wait=True, cancel_futures=False)
         if self._connection.is_open:
             self._connection.close()
 
-    def handle(self, channel: Any, method: Any, _properties: Any, body: bytes) -> None:
+    def process_job(self, body: bytes) -> None:
+        payload = json.loads(body.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("inference job payload must be a JSON object")
+
+        records = records_from_payload(payload)
+        request_id = str(payload["request_id"])
+        protein_id = str(payload.get("protein_id") or batch_protein_label(records))
+        source = str(payload.get("source") or "serving_api")
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        combined_sequence = "\n".join(record.sequence or "" for record in records)
+
+        process_cafa6_streaming_request(
+            request_id=request_id,
+            protein_id=protein_id,
+            username=str(payload.get("username") or "system"),
+            source=source,
+            sequence=combined_sequence,
+            model_name=str(payload.get("model_name") or metadata.get("model") or "ensemble"),
+            top_k=(
+                int(payload["top_k"])
+                if payload.get("top_k") is not None
+                else None
+            ),
+            threshold=(
+                float(payload["threshold"])
+                if payload.get("threshold") is not None
+                else None
+            ),
+            metadata=metadata,
+            created_at=str(payload["created_at"]),
+            retry_count=int(payload.get("retry_count", 0) or 0),
+            records=records,
+        )
+
+    def finish_delivery(self, delivery_tag: int, future: Future[None]) -> None:
+        if not self._channel.is_open:
+            return
+        exc = future.exception()
+        if exc is None:
+            self._channel.basic_ack(delivery_tag=delivery_tag)
+            return
+
+        print(f"inference_worker failed: {type(exc).__name__}: {exc}", flush=True)
+        self._channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
+
+    def schedule_delivery_finish(self, delivery_tag: int, future: Future[None]) -> None:
+        if not self._connection.is_open:
+            return
         try:
-            payload = json.loads(body.decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("inference job payload must be a JSON object")
-
-            records = records_from_payload(payload)
-            request_id = str(payload["request_id"])
-            protein_id = str(payload.get("protein_id") or batch_protein_label(records))
-            source = str(payload.get("source") or "serving_api")
-            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-            combined_sequence = "\n".join(record.sequence or "" for record in records)
-
-            process_cafa6_streaming_request(
-                request_id=request_id,
-                protein_id=protein_id,
-                username=str(payload.get("username") or "system"),
-                source=source,
-                sequence=combined_sequence,
-                model_name=str(payload.get("model_name") or metadata.get("model") or "ensemble"),
-                top_k=(
-                    int(payload["top_k"])
-                    if payload.get("top_k") is not None
-                    else None
-                ),
-                threshold=(
-                    float(payload["threshold"])
-                    if payload.get("threshold") is not None
-                    else None
-                ),
-                metadata=metadata,
-                created_at=str(payload["created_at"]),
-                retry_count=int(payload.get("retry_count", 0) or 0),
-                records=records,
+            self._connection.add_callback_threadsafe(
+                lambda: self.finish_delivery(delivery_tag, future)
             )
-            channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as exc:
-            print(f"inference_worker failed: {type(exc).__name__}: {exc}", flush=True)
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            print(
+                f"inference_worker could not finish delivery {delivery_tag}: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    def handle(self, _channel: Any, method: Any, _properties: Any, body: bytes) -> None:
+        delivery_tag = method.delivery_tag
+        try:
+            future = self._executor.submit(self.process_job, body)
+        except Exception as exc:
+            print(f"inference_worker submit failed: {type(exc).__name__}: {exc}", flush=True)
+            self._channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+            return
+
+        future.add_done_callback(
+            lambda completed: self.schedule_delivery_finish(delivery_tag, completed)
+        )
 
     def run(self) -> None:
-        prefetch_count = int(os.getenv("INFERENCE_WORKER_PREFETCH", "1"))
-        self._channel.basic_qos(prefetch_count=max(1, prefetch_count))
+        configured_prefetch = int(os.getenv("INFERENCE_WORKER_PREFETCH", str(self._concurrency)))
+        prefetch_count = max(1, min(configured_prefetch, self._concurrency))
+        self._channel.basic_qos(prefetch_count=prefetch_count)
         self._channel.basic_consume(
             queue=self._rabbit_config.inference_queue,
             on_message_callback=self.handle,
         )
         print(
-            f"inference_worker consuming {self._rabbit_config.inference_queue}",
+            f"inference_worker consuming {self._rabbit_config.inference_queue} "
+            f"with concurrency={self._concurrency} prefetch={prefetch_count}",
             flush=True,
         )
         self._channel.start_consuming()

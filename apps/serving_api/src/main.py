@@ -48,7 +48,7 @@ APP_TIMEZONE = timezone(timedelta(hours=7))
 
 Role = str
 MAX_FASTA_RECORDS_PER_REQUEST = 400
-MODAL_RECORDS_PER_REQUEST = 20
+MODAL_RECORDS_PER_REQUEST = 400
 MAX_PARALLEL_MODAL_REQUESTS = 4
 
 
@@ -711,6 +711,18 @@ class CassandraReader:
         )
         return [row_to_dict(row) for row in rows]
 
+    def latest_request_timeline(self, request_id: str, limit: int = 300) -> list[dict[str, Any]]:
+        rows = self._session.execute(
+            """
+            SELECT * FROM request_timeline_by_id
+            WHERE request_id = %s
+            ORDER BY event_ts DESC, event_type DESC
+            LIMIT %s
+            """,
+            (request_id, limit),
+        )
+        return [row_to_dict(row) for row in rows]
+
     def prediction_history_by_protein(self, protein_id: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._session.execute(
             """
@@ -720,6 +732,13 @@ class CassandraReader:
             (protein_id, limit),
         )
         return [row_to_dict(row) for row in rows]
+
+    def get_prediction_by_request(self, request_id: str) -> dict[str, Any] | None:
+        row = self._session.execute(
+            "SELECT * FROM prediction_by_request WHERE request_id = %s LIMIT 1",
+            (request_id,),
+        ).one()
+        return row_to_dict(row) if row else None
 
     def pipeline_metric(self, metric_name: str, metric_date: date, limit: int = 8) -> list[dict[str, Any]]:
         rows = self._session.execute(
@@ -1003,12 +1022,51 @@ def build_throughput(requests: list[InferenceRequest]) -> list[PipelineMetricPoi
 
 def calculate_latency_ms() -> tuple[int, int]:
     values = sorted(REQUEST_LATENCIES_MS.values())
+    return calculate_latency_from_values(values)
+
+def calculate_latency_from_values(values: list[int]) -> tuple[int, int]:
+    values = sorted(value for value in values if value > 0)
     if not values:
         return 0, 0
 
     average = round(sum(values) / len(values))
     p95_index = min(len(values) - 1, round((len(values) - 1) * 0.95))
     return average, values[p95_index]
+
+def latency_values_for_requests(
+    requests: list[InferenceRequest],
+    reader: CassandraReader | None,
+    max_timeline_reads: int = 50,
+) -> list[int]:
+    values: list[int] = []
+    seen_request_ids: set[str] = set()
+    visible_request_ids = {request.request_id for request in requests}
+
+    for request_id, latency_ms in REQUEST_LATENCIES_MS.items():
+        if request_id in visible_request_ids and latency_ms > 0:
+            values.append(latency_ms)
+            seen_request_ids.add(request_id)
+
+    if not reader:
+        return values
+
+    for request in requests[:max_timeline_reads]:
+        if request.request_id in seen_request_ids:
+            continue
+        try:
+            rows = reader.request_timeline(request.request_id, limit=300)
+        except Exception:
+            continue
+
+        request_values = [
+            int(row.get("latency_ms") or 0)
+            for row in rows
+            if int(row.get("latency_ms") or 0) > 0
+        ]
+        if request_values:
+            values.append(max(request_values))
+            seen_request_ids.add(request.request_id)
+    return values
 
 
 def is_today(iso_timestamp: str) -> bool:
@@ -1094,6 +1152,9 @@ def batch_protein_label(records: list[RequestInputRecord]) -> str:
         return records[0].protein_id
     return f"batch:{len(records)}-proteins"
 
+def is_batch_protein_id(protein_id: str | None) -> bool:
+    return str(protein_id or "").lower().startswith("batch:")
+
 def prediction_for_request_protein(
     request_id: str,
     protein_id: str,
@@ -1108,7 +1169,11 @@ def prediction_for_request_protein(
 
 def predictions_for_request(request_id: str) -> list[LatestPrediction]:
     return sorted(
-        [prediction for prediction in PREDICTIONS if prediction.request_id == request_id],
+        [
+            prediction
+            for prediction in PREDICTIONS
+            if prediction.request_id == request_id and not is_batch_protein_id(prediction.protein_id)
+        ],
         key=lambda item: (item.protein_id.lower(), item.predicted_at),
     )
 
@@ -1257,16 +1322,40 @@ def cassandra_input_for_request(request: InferenceRequest) -> RequestInput | Non
                     ),
                 )
                 for row in protein_rows
-                if row.get("protein_id")
+                if row.get("protein_id") and not is_batch_protein_id(str(row.get("protein_id")))
             ]
             if records:
+                metadata: dict[str, Any] = {
+                    "protein_count": len(records),
+                    "cassandra_relation": "request_proteins_by_request",
+                }
+                source = (
+                    str(protein_rows[0].get("source"))
+                    if protein_rows[0].get("source")
+                    else request.source
+                )
+                try:
+                    for event in reader.request_timeline(request.request_id):
+                        payload = event.get("payload")
+                        if not payload:
+                            continue
+                        parsed_payload = json.loads(str(payload))
+                        if not isinstance(parsed_payload, dict):
+                            continue
+                        timeline_input = input_from_event_payload(parsed_payload)
+                        if timeline_input and timeline_input.metadata:
+                            metadata.update(timeline_input.metadata)
+                            source = timeline_input.source or source
+                            break
+                except Exception:
+                    pass
                 return RequestInput(
                     protein_id=records[0].protein_id if len(records) == 1 else f"{len(records)} proteins",
                     sequence=None,
                     sequence_length=records[0].sequence_length if len(records) == 1 else None,
                     records=records,
-                    source=str(protein_rows[0].get("source")) if protein_rows[0].get("source") else request.source,
-                    metadata={"protein_count": len(records), "cassandra_relation": "request_proteins_by_request"},
+                    source=source,
+                    metadata=metadata,
                 )
     except Exception:
         pass
@@ -1412,38 +1501,104 @@ def enrich_prediction_terms(terms: list[PredictionTerm]) -> list[PredictionTerm]
     return [enrich_prediction_term(term) for term in terms]
 
 
+def score_from_payload(payload: dict[str, Any], default: float = 0.0) -> float:
+    for key in ("score", "confidence", "probability", "prob", "p", "value"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def term_id_from_payload(payload: dict[str, Any]) -> str:
+    return str(
+        payload.get("term_id")
+        or payload.get("go_term")
+        or payload.get("go_id")
+        or payload.get("id")
+        or ""
+    ).strip()
+
+
+def prediction_term_from_payload(
+    payload: dict[str, Any],
+    default_score: float = 0.0,
+) -> PredictionTerm | None:
+    term_id = term_id_from_payload(payload)
+    if not term_id:
+        return None
+
+    return enrich_prediction_term(
+        PredictionTerm(
+            term_id=term_id,
+            term_name=(
+                str(payload["term_name"])
+                if payload.get("term_name") is not None
+                else str(payload["name"])
+                if payload.get("name") is not None
+                else None
+            ),
+            ontology=map_aspect_value(payload.get("ontology") or payload.get("aspect")),
+            score=score_from_payload(payload, default_score),
+            definition=str(payload["definition"])
+            if payload.get("definition") is not None
+            else None,
+        )
+    )
+
+
+def prediction_terms_from_payload(payload: dict[str, Any]) -> list[PredictionTerm]:
+    top_terms_payload = payload.get("top_terms")
+    if not isinstance(top_terms_payload, list):
+        top_terms_payload = payload.get("predictions")
+
+    score_map = payload.get("score_map") or {}
+    top_scores_payload = payload.get("top_scores") or []
+    top_terms: list[PredictionTerm] = []
+
+    if isinstance(top_terms_payload, list):
+        for index, item in enumerate(top_terms_payload):
+            if isinstance(item, dict):
+                term_id = term_id_from_payload(item)
+                mapped_score = 0.0
+                if isinstance(score_map, dict) and term_id in score_map:
+                    mapped_score = float(score_map[term_id])
+                elif isinstance(top_scores_payload, list) and index < len(top_scores_payload):
+                    mapped_score = float(top_scores_payload[index])
+                term = prediction_term_from_payload(item, mapped_score)
+                if term:
+                    top_terms.append(term)
+            elif item:
+                term_id = str(item)
+                score = 0.0
+                if isinstance(score_map, dict) and term_id in score_map:
+                    score = float(score_map[term_id])
+                elif isinstance(top_scores_payload, list) and index < len(top_scores_payload):
+                    score = float(top_scores_payload[index])
+                top_terms.append(enrich_prediction_term(PredictionTerm(term_id=term_id, score=score)))
+
+    if not top_terms and isinstance(payload.get("predicted_terms"), list):
+        predicted_terms = payload["predicted_terms"]
+        for index, item in enumerate(predicted_terms):
+            term_id = str(item)
+            score = 0.0
+            if isinstance(score_map, dict) and term_id in score_map:
+                score = float(score_map[term_id])
+            elif isinstance(top_scores_payload, list) and index < len(top_scores_payload):
+                score = float(top_scores_payload[index])
+            top_terms.append(enrich_prediction_term(PredictionTerm(term_id=term_id, score=score)))
+
+    return sorted(enrich_prediction_terms(top_terms), key=lambda term: term.score, reverse=True)
+
+
 def prediction_from_event_payload(payload: dict[str, Any]) -> LatestPrediction | None:
     protein_id = payload.get("protein_id")
     request_id = payload.get("request_id")
     if not protein_id or not request_id:
         return None
-
-    top_terms_payload = payload.get("top_terms", [])
-    top_terms: list[PredictionTerm] = []
-    if isinstance(top_terms_payload, list):
-        for item in top_terms_payload:
-            if isinstance(item, dict):
-                term_id = item.get("term_id") or item.get("go_term")
-                if not term_id:
-                    continue
-                top_terms.append(
-                    enrich_prediction_term(
-                        PredictionTerm(
-                            term_id=str(term_id),
-                            term_name=(
-                                str(item["term_name"])
-                                if item.get("term_name") is not None
-                                else str(item["name"])
-                                if item.get("name") is not None
-                                else None
-                            ),
-                            ontology=map_aspect_value(item.get("ontology") or item.get("aspect")),
-                            score=float(item.get("score", 0)),
-                        )
-                    )
-                )
-            elif item:
-                top_terms.append(enrich_prediction_term(PredictionTerm(term_id=str(item), score=0)))
 
     server_result = payload.get("server_result")
     return LatestPrediction(
@@ -1451,7 +1606,7 @@ def prediction_from_event_payload(payload: dict[str, Any]) -> LatestPrediction |
         request_id=str(request_id),
         predicted_at=str(payload.get("predicted_at") or payload.get("event_ts") or app_now().isoformat()),
         model_version=str(payload.get("model_version") or "unknown"),
-        top_terms=enrich_prediction_terms(top_terms),
+        top_terms=prediction_terms_from_payload(payload),
         confidence_summary=(
             str(payload["confidence_summary"])
             if payload.get("confidence_summary") is not None
@@ -1462,25 +1617,33 @@ def prediction_from_event_payload(payload: dict[str, Any]) -> LatestPrediction |
 
 
 def prediction_from_history_row(row: dict[str, Any]) -> LatestPrediction:
-    top_terms_payload = row.get("top_terms") or row.get("predicted_terms") or []
-    top_scores_payload = row.get("top_scores") or []
-    score_map = row.get("score_map") or {}
-    top_terms: list[PredictionTerm] = []
-    if isinstance(top_terms_payload, list):
-        for index, term_id in enumerate(top_terms_payload):
-            score = 0.0
-            if isinstance(score_map, dict) and term_id in score_map:
-                score = float(score_map[term_id])
-            elif isinstance(top_scores_payload, list) and index < len(top_scores_payload):
-                score = float(top_scores_payload[index])
-            top_terms.append(enrich_prediction_term(PredictionTerm(term_id=str(term_id), score=score)))
+    payload: dict[str, Any] = {
+        "top_terms": row.get("top_terms") or row.get("predicted_terms") or [],
+        "top_scores": row.get("top_scores") or [],
+        "score_map": row.get("score_map") or {},
+    }
+    prediction_rows = row.get("prediction_rows") or []
+    if isinstance(prediction_rows, list) and prediction_rows:
+        parsed_rows: list[dict[str, Any]] = []
+        for item in prediction_rows:
+            if isinstance(item, dict):
+                parsed_rows.append(item)
+            elif isinstance(item, str):
+                try:
+                    parsed = json.loads(item)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    parsed_rows.append(parsed)
+        if parsed_rows:
+            payload["top_terms"] = parsed_rows
 
     return LatestPrediction(
         protein_id=str(row.get("protein_id", "")),
         request_id=str(row.get("request_id", "")),
         predicted_at=str(row.get("predicted_at") or app_now().isoformat()),
         model_version=str(row.get("model_version") or "unknown"),
-        top_terms=enrich_prediction_terms(top_terms),
+        top_terms=prediction_terms_from_payload(payload),
         confidence_summary=(
             str(row["confidence_summary"])
             if row.get("confidence_summary") is not None
@@ -1544,29 +1707,54 @@ def request_protein_predictions_from_timeline(request_id: str) -> list[LatestPre
                 seen.add(prediction.protein_id.lower())
     return sorted(predictions, key=lambda item: item.protein_id.lower())
 
-def request_stream_events_from_cassandra(request_id: str) -> list[RequestStreamEvent]:
+def request_stream_event_from_row(row: dict[str, Any]) -> RequestStreamEvent:
+    payload: dict[str, Any] = {}
+    raw_payload = row.get("payload")
+    if raw_payload:
+        parsed_payload = json.loads(str(raw_payload))
+        if isinstance(parsed_payload, dict):
+            payload = parsed_payload
+    return RequestStreamEvent(
+        eventType=str(row.get("event_type") or payload.get("event_type") or "request_status"),
+        payload=payload,
+        receivedAt=str(row.get("event_ts") or payload.get("event_ts") or app_now().isoformat()),
+    )
+
+def request_stream_events_from_cassandra(
+    request_id: str,
+    limit: int = 300,
+    latest: bool = False,
+) -> list[RequestStreamEvent]:
     reader = get_cassandra_reader()
     if not reader:
         return []
-    events: list[RequestStreamEvent] = []
     try:
-        for row in reader.request_timeline(request_id):
-            payload: dict[str, Any] = {}
-            raw_payload = row.get("payload")
-            if raw_payload:
-                parsed_payload = json.loads(str(raw_payload))
-                if isinstance(parsed_payload, dict):
-                    payload = parsed_payload
-            events.append(
-                RequestStreamEvent(
-                    eventType=str(row.get("event_type") or payload.get("event_type") or "request_status"),
-                    payload=payload,
-                    receivedAt=str(row.get("event_ts") or payload.get("event_ts") or app_now().isoformat()),
-                )
-            )
+        rows = (
+            reader.latest_request_timeline(request_id, limit=limit)
+            if latest
+            else reader.request_timeline(request_id, limit=limit)
+        )
+        events = [request_stream_event_from_row(row) for row in rows]
     except Exception:
         return []
     return events
+
+def merged_request_stream_events(request_id: str) -> list[RequestStreamEvent]:
+    events = [
+        *request_stream_events_from_cassandra(request_id, latest=True),
+        *REQUEST_STREAM_EVENTS.get(request_id, []),
+    ]
+    by_key: dict[tuple[str, str, str, str], RequestStreamEvent] = {}
+    for event in events:
+        by_key[
+            (
+                event.eventType,
+                event.receivedAt,
+                str(event.payload.get("modal_event", "")),
+                str(event.payload.get("modal_step", "")),
+            )
+        ] = event
+    return sorted(by_key.values(), key=lambda event: event.receivedAt)[-300:]
 
 
 def map_aspect_value(aspect: Any) -> str | None:
@@ -2271,6 +2459,7 @@ def process_cafa6_stream_chunk(
         model_name=model_name,
         top_k=top_k,
         threshold=threshold,
+        stream_batch_size=len(record_payloads),
     ):
         latest_latency_ms = stream_event.elapsed_ms
         event_model_name = model_name
@@ -2379,7 +2568,7 @@ def process_cafa6_streaming_request(
             extra_payload=(
                 {
                     "modal_event": "input_records",
-                    "input_records": input_records_payload(records),
+                    "input_records": input_records_payload(records, include_sequence=True),
                 }
                 if records
                 else None
@@ -2445,6 +2634,7 @@ def process_cafa6_streaming_request(
             model_name=model_name,
             top_k=top_k,
             threshold=threshold,
+            stream_batch_size=len(record_payloads),
         ):
             latest_latency_ms = stream_event.elapsed_ms
             if stream_event.event == "start":
@@ -2857,6 +3047,7 @@ def upsert_replay_campaign(
 @app.get("/api/metrics/pipeline/summary", response_model=DashboardSummary)
 def get_pipeline_summary(
     window: str = Query(default="minute"),
+    request_limit: int = Query(default=200, ge=1, le=5000),
     current_user: UserPublic = Depends(require_roles("user", "admin")),
 ) -> DashboardSummary:
     reader = get_cassandra_reader()
@@ -2864,11 +3055,11 @@ def get_pipeline_summary(
     if reader:
         try:
             if user_is_admin(current_user):
-                rows = reader.list_requests(app_now().date(), 50)
+                rows = reader.list_requests(app_now().date(), request_limit)
             else:
                 rows = reader.list_requests(
                     app_now().date(),
-                    50,
+                    request_limit,
                     table="requests_by_user_window",
                     username=current_user.username,
                 )
@@ -2901,7 +3092,9 @@ def get_pipeline_summary(
     )
     failed_count = status_counts.get("failed", 0)
     error_rate = failed_count / len(summary_requests) if summary_requests else 0
-    avg_latency_ms, p95_latency_ms = calculate_latency_ms()
+    avg_latency_ms, p95_latency_ms = calculate_latency_from_values(
+        latency_values_for_requests(summary_requests, reader)
+    )
     error_counts = Counter(
         request.error_code or "UNKNOWN"
         for request in summary_requests
@@ -2913,6 +3106,36 @@ def get_pipeline_summary(
         for prediction in latest_predictions()
         if prediction.request_id in visible_request_ids or user_is_admin(current_user)
     ]
+    if reader:
+        for request in summary_requests[:25]:
+            try:
+                prediction_row = reader.get_prediction_by_request(request.request_id)
+            except Exception:
+                prediction_row = None
+            if prediction_row:
+                visible_predictions.append(prediction_from_history_row(prediction_row))
+
+    prediction_by_key: dict[tuple[str, str], LatestPrediction] = {}
+    for prediction in visible_predictions:
+        prediction_by_key[(prediction.request_id, prediction.protein_id)] = prediction
+    visible_predictions = sorted(
+        prediction_by_key.values(),
+        key=lambda prediction: prediction.predicted_at,
+        reverse=True,
+    )[:10]
+    protein_count = 0
+    for request in summary_requests:
+        request_input = REQUEST_INPUTS.get(request.request_id)
+        if request_input and request_input.records:
+            protein_count += len(request_input.records)
+        else:
+            protein_count += 1
+    prediction_count = len(prediction_by_key)
+    timeline_write_estimate = sum(
+        1
+        for request in summary_requests
+        for _ in (REQUEST_STREAM_EVENTS.get(request.request_id) or [None])
+    )
     return DashboardSummary(
         total_today=total_today,
         status_counts=status_counts,
@@ -2920,11 +3143,11 @@ def get_pipeline_summary(
         p95_latency_ms=p95_latency_ms,
         error_rate=round(error_rate, 4),
         throughput=build_throughput(summary_requests),
-        recent_requests=summary_requests[:12],
+        recent_requests=summary_requests[:10],
         recent_predictions=visible_predictions,
         recent_failed_requests=[
             request for request in summary_requests if request.current_status == "failed"
-        ],
+        ][:10],
         error_counts=dict(error_counts.most_common(8)),
         cassandra_query_patterns=[
             "request_status_by_id",
@@ -2944,9 +3167,12 @@ def get_pipeline_summary(
             "requests_by_status_window": total_today,
             "requests_by_user_window": total_today,
             "requests_by_protein_window": total_today,
-            "request_proteins_by_request": total_today,
-            "protein_requests_by_protein": total_today,
-            "request_timeline_by_id": total_today,
+            "request_proteins_by_request": protein_count,
+            "protein_requests_by_protein": protein_count,
+            "request_timeline_by_id": max(total_today, timeline_write_estimate),
+            "latest_prediction_by_protein": prediction_count,
+            "prediction_history_by_protein": prediction_count,
+            "prediction_by_request": prediction_count,
         },
         kafka_topics=[
             os.getenv("KAFKA_REQUEST_STATUS_TOPIC", "request_status"),
@@ -3040,7 +3266,7 @@ def create_inference_request(
         metadata=request_metadata,
         extra_payload={
             "modal_event": "queued",
-            "input_records": input_records_payload(records),
+            "input_records": input_records_payload(records, include_sequence=True),
             "queue_name": RabbitMQConfig().inference_queue,
         },
     )
@@ -3111,6 +3337,9 @@ def get_inference_request_result(
         protein_results = request_protein_predictions_from_cassandra(request_id, request_input)
     if should_lookup_persisted_predictions and not protein_results:
         protein_results = request_protein_predictions_from_timeline(request_id)
+    protein_results = [
+        item for item in protein_results if not is_batch_protein_id(item.protein_id)
+    ]
     prediction = protein_results[0] if protein_results else (
         prediction_for_request(request_id) or cassandra_prediction_for_request(request)
     )
@@ -3129,8 +3358,7 @@ def get_inference_request_result(
         prediction=prediction,
         protein_results=protein_results or ([prediction] if prediction else []),
         server_result=prediction.server_result if prediction else None,
-        stream_events=REQUEST_STREAM_EVENTS.get(request_id, [])
-        or request_stream_events_from_cassandra(request_id),
+        stream_events=merged_request_stream_events(request_id),
     )
 
 
@@ -3392,6 +3620,16 @@ def list_admin_requests(
                 if len(rows) >= fetch_limit:
                     break
             requests = [inference_request_from_row(row) for row in rows]
+            if table == "requests_by_status_window" and status_filter:
+                reconciled_requests: list[InferenceRequest] = []
+                for request in requests:
+                    latest_row = reader.get_request(request.request_id)
+                    if not latest_row:
+                        continue
+                    latest_request = inference_request_from_row(latest_row)
+                    if latest_request.current_status == status_filter.lower():
+                        reconciled_requests.append(latest_request)
+                requests = reconciled_requests
             memory_items = [
                 request
                 for request in REQUESTS
@@ -3579,6 +3817,10 @@ def get_admin_request_timeline(
     reader = get_cassandra_reader()
     if reader:
         try:
+            rows = sorted(
+                reader.latest_request_timeline(request_id, limit=300),
+                key=lambda row: str(row.get("event_ts") or ""),
+            )
             return [
                 RequestTimelineEvent(
                     request_id=str(row.get("request_id", request_id)),
@@ -3590,7 +3832,7 @@ def get_admin_request_timeline(
                     latency_ms=int(row.get("latency_ms", 0) or 0),
                     payload=row.get("payload"),
                 )
-                for row in reader.request_timeline(request_id)
+                for row in rows
             ]
         except Exception:
             pass

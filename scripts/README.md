@@ -5,7 +5,9 @@ Thu muc nay chua cac script phuc vu dev, test va benchmark local.
 ## Stress test submit sequence
 
 Script [stress_submit_sequences.py](stress_submit_sequences.py) dang nhap vao Serving API,
-gui dong thoi request den endpoint `/api/inference-requests`, va in throughput/latency/failure.
+gui dong thoi request den endpoint `/api/inference-requests`, doi tung request ve terminal
+status (`completed`, `failed`, `cancelled`), roi moi gui request tiep theo cho slot concurrent do.
+Throughput/latency vi vay la end-to-end, khong chi la thoi gian API accept request.
 
 ### Cai tqdm (thanh tien do)
 
@@ -19,7 +21,7 @@ pip install -r requirements.txt
 python scripts\stress_submit_sequences.py `
   --input-dir .\tmp\stress_sequences `
   --create-samples 20 `
-  --workers 8 `
+  --concurrency 8 `
   --username admin `
   --password admin123
 ```
@@ -40,8 +42,7 @@ python scripts\stress_submit_sequences.py `
   --input-dir .\tmp\stress_sequences `
   --create-samples 1000 `
   --total-requests 1000 `
-  --workers 32 `
-  --max-inflight 256 `
+  --concurrency 32 `
   --progress-every 50000 `
   --checkpoint-every 100000 `
   --summary-output .\tmp\bench\summary_1m.json `
@@ -64,8 +65,7 @@ python scripts\stress_submit_sequences.py `
   --create-samples 1000 `
   --records-per-request 10 `
   --total-requests 360000 `
-  --workers 64 `
-  --max-inflight 256 `
+  --concurrency 64 `
   --checkpoint-every 20000 `
   --no-result-log `
   --dry-run
@@ -78,8 +78,7 @@ python scripts\stress_submit_sequences.py `
   --input-dir .\tmp\stress_sequences_1k `
   --records-per-request 10 `
   --total-requests 360000 `
-  --workers 64 `
-  --max-inflight 256 `
+  --concurrency 64 `
   --timeout 120 `
   --progress-every 10000 `
   --checkpoint-every 20000 `
@@ -95,8 +94,12 @@ python scripts\stress_submit_sequences.py `
 
 - `--total-requests`: tong so request can gui. Neu dat tham so nay thi `--repeat` bi bo qua.
 - `--records-per-request`: so sequence records trong moi HTTP request (`records` payload).
-- `--workers`: so luong thread submit song song.
-- `--max-inflight`: gioi han futures dang cho, giup khong no RAM khi so request rat lon.
+- `--concurrency`: so request HTTP chay dong thoi. Mac dinh script giu dung N request dang bay, giong N user cung submit.
+- `--workers`: alias cu cua `--concurrency`.
+- `--max-inflight`: trong che do doi completed, gia tri cao hon `--concurrency` bi bo qua de khong gui them request truoc khi slot cu xong.
+- `--poll-interval`: so giay giua moi lan poll `/api/inference-requests/{request_id}`.
+- `--completion-timeout`: gioi han thoi gian doi mot request ve terminal status; `0` la khong gioi han.
+- `--no-start-gate`: tat start gate. Mac dinh bat de wave dau tien cua N request bat dau gan nhu cung luc.
 - `--wait-timeout`: tan suat kiem tra trang thai `inflight` (giay), giup phat hien run dang bi treo som hon.
 - `--stall-report-seconds`: neu khong co request nao hoan thanh trong N giay, script in heartbeat `[heartbeat]` (0 de tat).
 - `--no-result-log`: tat ghi tung request vao JSONL (rat can cho run 10M-100M).
@@ -127,8 +130,7 @@ python scripts\stress_submit_sequences.py `
   --api-base-url http://localhost:8002 `
   --records-per-request 400 `
   --total-requests 900 `
-  --workers 32 `
-  --max-inflight 256 `
+  --concurrency 32 `
   --username admin`
   --password admin123
 
@@ -138,7 +140,6 @@ python scripts\stress_submit_sequences.py `
   --api-base-url http://localhost:8002 `
   --records-per-request 400 `
   --total-requests 1 `
-  --workers 32 `
-  --max-inflight 256 `
+  --concurrency 32 `
   --username admin`
   --password admin123

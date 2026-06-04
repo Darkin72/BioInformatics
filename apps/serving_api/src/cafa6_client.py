@@ -126,6 +126,7 @@ def stream_cafa6_analysis_records(
     model_name: str = "ensemble",
     top_k: int | None = None,
     threshold: float | None = None,
+    stream_batch_size: int | None = None,
 ) -> Iterator[Cafa6StreamEvent]:
     """Call the configured Modal SSE endpoint and yield parsed stream events."""
     stream_url = (
@@ -142,7 +143,7 @@ def stream_cafa6_analysis_records(
             os.getenv("CAFA6_TIMEOUT_SECONDS", "900"),
         )
     )
-    stream_batch_size = int(os.getenv("CAFA6_STREAM_BATCH_SIZE", "1"))
+    configured_stream_batch_size = int(os.getenv("CAFA6_STREAM_BATCH_SIZE", "400"))
     normalized_records = []
     for record in records:
         protein_id = str(record.get("id", "")).strip()
@@ -155,12 +156,20 @@ def stream_cafa6_analysis_records(
     if not normalized_records:
         raise Cafa6ValidationError("At least one FASTA record is required.")
 
+    resolved_stream_batch_size = max(
+        1,
+        min(
+            len(normalized_records),
+            int(stream_batch_size or configured_stream_batch_size),
+        ),
+    )
+
     payload = {
         "records": normalized_records,
         "model": model_name,
         "top_k": resolved_top_k,
         "threshold": threshold,
-        "stream_batch_size": stream_batch_size,
+        "stream_batch_size": resolved_stream_batch_size,
         "include_branch_predictions": True,
     }
 

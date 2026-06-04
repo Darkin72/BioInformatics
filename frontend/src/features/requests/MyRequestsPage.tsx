@@ -7,6 +7,8 @@ import { formatDateTime } from '../../shared/date'
 import type { UserRequestList } from '../../shared/types'
 import { getMyRequests } from './requestsApi'
 
+const REQUEST_TABLE_PAGE_SIZE = 10
+
 interface MyRequestsPageProps {
   navigate: (path: string) => void
 }
@@ -14,7 +16,6 @@ interface MyRequestsPageProps {
 export function MyRequestsPage({ navigate }: MyRequestsPageProps) {
   const [days, setDays] = useState(30)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
   const [remote, setRemote] = useState<UserRequestList | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -27,7 +28,7 @@ export function MyRequestsPage({ navigate }: MyRequestsPageProps) {
         setIsLoading(true)
       }
 
-      getMyRequests({ days, page, pageSize })
+      getMyRequests({ days, page, pageSize: REQUEST_TABLE_PAGE_SIZE })
         .then((data) => {
           if (isActive) {
             setRemote(data)
@@ -53,7 +54,7 @@ export function MyRequestsPage({ navigate }: MyRequestsPageProps) {
     return () => {
       isActive = false
     }
-  }, [days, page, pageSize])
+  }, [days, page])
 
   if (isLoading && !remote) {
     return <LoadingState />
@@ -88,22 +89,6 @@ export function MyRequestsPage({ navigate }: MyRequestsPageProps) {
             {[7, 30, 90, 365].map((value) => (
               <option key={value} value={value}>
                 {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Page size
-          <select
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value))
-              setPage(1)
-            }}
-          >
-            {[10, 25, 50, 100].map((size) => (
-              <option key={size} value={size}>
-                {size}
               </option>
             ))}
           </select>

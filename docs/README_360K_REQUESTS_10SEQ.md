@@ -32,8 +32,7 @@ python scripts\stress_submit_sequences.py `
   --create-samples 1000 `
   --records-per-request 10 `
   --total-requests 360000 `
-  --workers 64 `
-  --max-inflight 256 `
+  --concurrency 64 `
   --checkpoint-every 20000 `
   --no-result-log `
   --dry-run
@@ -51,8 +50,7 @@ python scripts\stress_submit_sequences.py `
   --input-dir .\tmp\stress_sequences_1k `
   --records-per-request 10 `
   --total-requests 360000 `
-  --workers 64 `
-  --max-inflight 256 `
+  --concurrency 64 `
   --timeout 120 `
   --progress-every 10000 `
   --checkpoint-every 20000 `
@@ -66,7 +64,7 @@ python scripts\stress_submit_sequences.py `
 
 ## 4) Giai thich output
 
-- `throughput_rps`: so request/giay.
+- `throughput_rps`: so request submit/giay.
 - `throughput_seq_per_sec`: so sequence/giay.
 - `failure_rate`: ti le request loi.
 - `checkpoint_360k_x10.jsonl`: moc progress theo thoi gian.
@@ -75,6 +73,6 @@ python scripts\stress_submit_sequences.py `
 ## 5) Neu bi timeout hoac loi nhieu
 
 Thu theo thu tu:
-1. Giam `--workers` (vi du tu `64` xuong `32`).
-2. Giam `--max-inflight` (vi du tu `256` xuong `128`).
-3. Tang `--timeout` (vi du `180`).
+1. Giam `--concurrency` (vi du tu `64` xuong `32`).
+2. Tang `--timeout` (vi du `180`).
+3. Giam `--records-per-request` neu moi request dang gui qua nhieu sequence.

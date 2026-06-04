@@ -25,7 +25,7 @@ export function getAdminRequests(params: {
     search.set('username', params.username)
   }
   search.set('page', String(params.page ?? 1))
-  search.set('page_size', String(params.pageSize ?? 25))
+  search.set('page_size', String(params.pageSize ?? 10))
   return apiRequest<AdminRequestList>(`/api/admin/requests?${search}`)
 }
 

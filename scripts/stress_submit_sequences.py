@@ -6,13 +6,16 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, TextIO
+from typing import Any, Iterable, TextIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import requests
 
 try:
     from tqdm import tqdm
@@ -23,6 +26,14 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 SEQUENCE_EXTENSIONS = {".fa", ".faa", ".fasta", ".fna", ".txt"}
 API_MAX_RECORDS_PER_REQUEST = 400
+DEFAULT_RECORDS_PER_REQUEST = 400
+DEFAULT_STREAM_BATCH_SIZE = 400
+MAX_STREAM_BATCH_SIZE = 400
+TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+DEFAULT_MODEL = "ensemble"
+DEFAULT_TOP_K = 10
+DEFAULT_THRESHOLD = 0.01
+DEFAULT_COMPLETION_TIMEOUT_SECONDS = 1800.0
 
 
 @dataclass(frozen=True)
@@ -47,6 +58,11 @@ class SubmitResult:
     status: str
     latency_ms: float
     error: str | None
+    submit_latency_ms: float | None = None
+    poll_count: int = 0
+    stage_name: str | None = None
+    batch_count: int = 0
+    prediction_count: int = 0
 
 
 class LatencyReservoir:
@@ -169,8 +185,9 @@ class BenchmarkStats:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Stress test Serving API by submitting many protein sequences with bounded concurrency. "
-            "Designed for long-running big-volume experiments."
+            "Stress test Serving API by submitting protein sequences with N concurrent "
+            "end-to-end requests. Each concurrency slot waits for completed/failed "
+            "before submitting its next request."
         ),
     )
     parser.add_argument(
@@ -184,21 +201,36 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_API_BASE_URL,
         help=f"Serving API base URL. Default: {DEFAULT_API_BASE_URL}",
     )
+    parser.add_argument(
+        "--direct-sse-url",
+        default=os.getenv("CAFA6_GRAPH_AWARE_PREDICT_SSE_URL", ""),
+        help=(
+            "Call the graph-aware Modal SSE endpoint directly instead of "
+            "Serving API /api/inference-requests. Defaults to "
+            "CAFA6_GRAPH_AWARE_PREDICT_SSE_URL if set."
+        ),
+    )
     parser.add_argument("--username", default=None, help="Operator username.")
     parser.add_argument("--password", default=None, help="Operator password.")
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="Number of end-to-end inference requests to keep running at the same time.",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
-        default=4,
-        help="Number of concurrent worker threads.",
+        default=None,
+        help="Deprecated alias for --concurrency.",
     )
     parser.add_argument(
         "--max-inflight",
         type=int,
         default=0,
         help=(
-            "Maximum in-flight futures. 0 means auto (workers * 4). "
-            "Set this to keep memory bounded in large runs."
+            "Maximum in-flight futures. 0 means exactly --concurrency. "
+            "Values higher than --concurrency are ignored in completion-wait mode."
         ),
     )
     parser.add_argument(
@@ -219,11 +251,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--records-per-request",
         type=int,
-        default=1,
+        default=DEFAULT_RECORDS_PER_REQUEST,
         help=(
             "Number of sequence records included in each HTTP request payload "
             "under `records`."
         ),
+    )
+    parser.add_argument(
+        "--stream-batch-size",
+        type=int,
+        default=DEFAULT_STREAM_BATCH_SIZE,
+        help=(
+            "SSE stream batch size sent to the direct Modal endpoint. "
+            f"Default: {DEFAULT_STREAM_BATCH_SIZE}; max: {MAX_STREAM_BATCH_SIZE}."
+        ),
+    )
+    parser.add_argument(
+        "--include-branch-predictions",
+        action="store_true",
+        help="Ask the direct SSE endpoint to include per-branch predictions.",
+    )
+    parser.add_argument(
+        "--model",
+        choices=["ensemble", "esm_mlp", "protcnn", "bilstm"],
+        default=DEFAULT_MODEL,
+        help=f"Inference model to request. Default: {DEFAULT_MODEL}.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=DEFAULT_TOP_K,
+        help=f"Top K terms to request. Default: {DEFAULT_TOP_K}.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"Prediction score threshold to request. Default: {DEFAULT_THRESHOLD}.",
     )
     parser.add_argument(
         "--limit",
@@ -317,6 +381,29 @@ def parse_args() -> argparse.Namespace:
         "--no-tqdm",
         action="store_true",
         help="Disable tqdm progress bar.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=5.0,
+        help="Seconds between status polls while waiting for a submitted request to finish.",
+    )
+    parser.add_argument(
+        "--completion-timeout",
+        type=float,
+        default=DEFAULT_COMPLETION_TIMEOUT_SECONDS,
+        help=(
+            "Maximum seconds to wait for one request to reach a terminal status. "
+            f"Default: {DEFAULT_COMPLETION_TIMEOUT_SECONDS:.0f}. 0 means no limit."
+        ),
+    )
+    parser.add_argument(
+        "--no-start-gate",
+        action="store_true",
+        help=(
+            "Disable the start gate that releases the first concurrency wave together. "
+            "By default the first N requests start as close together as threads allow."
+        ),
     )
     parser.add_argument(
         "--checkpoint-every",
@@ -549,11 +636,134 @@ def request_label_from_batch(batch: RequestBatch) -> str:
     return f"batch#{batch.request_index}:{len(batch.records)} records"
 
 
+def iter_sse_events(response: requests.Response) -> Iterable[tuple[str, str]]:
+    event_name = "message"
+    data_lines: list[str] = []
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if raw_line is None:
+            continue
+        line = raw_line.rstrip("\n")
+        if line == "":
+            if data_lines:
+                yield event_name, "\n".join(data_lines)
+            event_name = "message"
+            data_lines = []
+            continue
+        if line.startswith("event:"):
+            event_name = line.split(":", 1)[1].strip() or "message"
+        elif line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].strip())
+
+    if data_lines:
+        yield event_name, "\n".join(data_lines)
+
+def submit_direct_sse_batch(
+    direct_sse_url: str,
+    batch: RequestBatch,
+    timeout: float,
+    model: str,
+    top_k: int,
+    threshold: float,
+    stream_batch_size: int,
+    include_branch_predictions: bool,
+    start_gate: threading.Event | None = None,
+) -> SubmitResult:
+    label = request_label_from_batch(batch)
+    payload_records = [
+        {"id": record.protein_id, "sequence": record.sequence}
+        for record in batch.records
+    ]
+    payload = {
+        "records": payload_records,
+        "model": model,
+        "top_k": top_k,
+        "threshold": threshold,
+        "stream_batch_size": stream_batch_size,
+        "include_branch_predictions": include_branch_predictions,
+    }
+    if start_gate is not None:
+        start_gate.wait()
+
+    started = time.perf_counter()
+    first_event_ms: float | None = None
+    batch_count = 0
+    streamed_record_count = 0
+    prediction_count = 0
+    status = "unknown"
+    error: str | None = None
+    try:
+        with requests.post(
+            direct_sse_url,
+            json=payload,
+            headers={"Accept": "text/event-stream"},
+            stream=True,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            for event_name, raw_data in iter_sse_events(response):
+                if first_event_ms is None:
+                    first_event_ms = (time.perf_counter() - started) * 1000
+                try:
+                    data: dict[str, Any] = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    data = {}
+
+                if event_name == "batch":
+                    batch_count += 1
+                    records = data.get("records", [])
+                    predictions = data.get("predictions", [])
+                    if isinstance(records, list):
+                        streamed_record_count += len(records)
+                    if isinstance(predictions, list):
+                        prediction_count += len(predictions)
+                elif event_name == "error":
+                    status = "modal_error"
+                    error = str(data.get("message") or raw_data)
+                elif event_name == "done":
+                    status = "completed"
+
+        if status == "unknown":
+            status = "completed_without_done"
+        if status == "completed" and streamed_record_count and streamed_record_count != len(batch.records):
+            status = "record_count_mismatch"
+            error = (
+                f"SSE returned {streamed_record_count} records for "
+                f"{len(batch.records)} submitted records."
+            )
+    except requests.HTTPError as exc:
+        status = "http_error"
+        error = str(exc)
+    except requests.RequestException as exc:
+        status = "request_error"
+        error = str(exc)
+    except Exception as exc:
+        status = "unexpected_error"
+        error = f"{exc.__class__.__name__}: {exc}"
+
+    latency_ms = (time.perf_counter() - started) * 1000
+    return SubmitResult(
+        request_label=label,
+        record_count=len(batch.records),
+        request_id=None,
+        status=status,
+        latency_ms=latency_ms,
+        error=error,
+        submit_latency_ms=first_event_ms,
+        poll_count=0,
+        stage_name="direct_sse",
+        batch_count=batch_count,
+        prediction_count=prediction_count,
+    )
+
 def submit_batch(
     api_base_url: str,
     token: str,
     batch: RequestBatch,
     timeout: float,
+    model: str,
+    top_k: int,
+    threshold: float,
+    start_gate: threading.Event | None = None,
 ) -> SubmitResult:
     label = request_label_from_batch(batch)
     payload_records = [
@@ -563,6 +773,8 @@ def submit_batch(
         }
         for record in batch.records
     ]
+    if start_gate is not None:
+        start_gate.wait()
     started = time.perf_counter()
     try:
         response = request_json(
@@ -571,9 +783,15 @@ def submit_batch(
             {
                 "records": payload_records,
                 "source": "stress_file",
+                "model": model,
+                "top_k": top_k,
+                "threshold": threshold,
                 "metadata": {
                     "record_count": len(batch.records),
                     "request_index": batch.request_index,
+                    "model": model,
+                    "top_k": top_k,
+                    "threshold": threshold,
                 },
             },
             token=token,
@@ -587,6 +805,12 @@ def submit_batch(
             status=str(response.get("current_status", "unknown")),
             latency_ms=latency_ms,
             error=None,
+            submit_latency_ms=latency_ms,
+            stage_name=(
+                str(response.get("stage_name"))
+                if response.get("stage_name") is not None
+                else None
+            ),
         )
     except HTTPError as error:
         latency_ms = (time.perf_counter() - started) * 1000
@@ -607,6 +831,7 @@ def submit_batch(
             status="http_error",
             latency_ms=latency_ms,
             error=message,
+            submit_latency_ms=latency_ms,
         )
     except (OSError, URLError) as error:
         latency_ms = (time.perf_counter() - started) * 1000
@@ -617,6 +842,7 @@ def submit_batch(
             status="network_error",
             latency_ms=latency_ms,
             error=str(error),
+            submit_latency_ms=latency_ms,
         )
     except Exception as error:
         latency_ms = (time.perf_counter() - started) * 1000
@@ -627,7 +853,129 @@ def submit_batch(
             status="unexpected_error",
             latency_ms=latency_ms,
             error=f"{type(error).__name__}: {error}",
+            submit_latency_ms=latency_ms,
         )
+
+def get_request_status(
+    api_base_url: str,
+    token: str,
+    request_id: str,
+    timeout: float,
+) -> dict:
+    return request_json(
+        "GET",
+        f"{api_base_url.rstrip('/')}/api/inference-requests/{request_id}",
+        payload=None,
+        token=token,
+        timeout=timeout,
+    )
+
+def submit_and_wait_batch(
+    api_base_url: str,
+    token: str,
+    batch: RequestBatch,
+    timeout: float,
+    model: str,
+    top_k: int,
+    threshold: float,
+    poll_interval: float,
+    completion_timeout: float,
+    start_gate: threading.Event | None = None,
+) -> SubmitResult:
+    started = time.perf_counter()
+    result = submit_batch(
+        api_base_url=api_base_url,
+        token=token,
+        batch=batch,
+        timeout=timeout,
+        model=model,
+        top_k=top_k,
+        threshold=threshold,
+        start_gate=start_gate,
+    )
+    submit_latency_ms = result.submit_latency_ms or result.latency_ms
+    if result.error or not result.request_id:
+        result.latency_ms = (time.perf_counter() - started) * 1000
+        result.submit_latency_ms = submit_latency_ms
+        return result
+
+    status = result.status.lower()
+    stage_name = result.stage_name
+    poll_count = 0
+
+    while status not in TERMINAL_STATUSES:
+        elapsed = time.perf_counter() - started
+        if completion_timeout > 0 and elapsed >= completion_timeout:
+            return SubmitResult(
+                request_label=result.request_label,
+                record_count=result.record_count,
+                request_id=result.request_id,
+                status="completion_timeout",
+                latency_ms=elapsed * 1000,
+                error=(
+                    f"Request did not reach a terminal status within "
+                    f"{completion_timeout:.1f}s; last status={status}, stage={stage_name}"
+                ),
+                submit_latency_ms=submit_latency_ms,
+                poll_count=poll_count,
+                stage_name=stage_name,
+            )
+
+        sleep_seconds = poll_interval
+        if completion_timeout > 0:
+            sleep_seconds = min(sleep_seconds, max(0.0, completion_timeout - elapsed))
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+        try:
+            payload = get_request_status(api_base_url, token, result.request_id, timeout)
+        except HTTPError as error:
+            latency_ms = (time.perf_counter() - started) * 1000
+            return SubmitResult(
+                request_label=result.request_label,
+                record_count=result.record_count,
+                request_id=result.request_id,
+                status="status_http_error",
+                latency_ms=latency_ms,
+                error=f"HTTP {error.code} while polling request status",
+                submit_latency_ms=submit_latency_ms,
+                poll_count=poll_count,
+                stage_name=stage_name,
+            )
+        except (OSError, URLError) as error:
+            latency_ms = (time.perf_counter() - started) * 1000
+            return SubmitResult(
+                request_label=result.request_label,
+                record_count=result.record_count,
+                request_id=result.request_id,
+                status="status_network_error",
+                latency_ms=latency_ms,
+                error=str(error),
+                submit_latency_ms=submit_latency_ms,
+                poll_count=poll_count,
+                stage_name=stage_name,
+            )
+
+        poll_count += 1
+        status = str(payload.get("current_status", "unknown")).lower()
+        stage_name = (
+            str(payload.get("stage_name"))
+            if payload.get("stage_name") is not None
+            else None
+        )
+
+    latency_ms = (time.perf_counter() - started) * 1000
+    return SubmitResult(
+        request_label=result.request_label,
+        record_count=result.record_count,
+        request_id=result.request_id,
+        status=status,
+        latency_ms=latency_ms,
+        error=None if status == "completed" else f"Terminal status: {status}",
+        submit_latency_ms=submit_latency_ms,
+        poll_count=poll_count,
+        stage_name=stage_name,
+    )
 
 
 def write_result_line(output: TextIO, result: SubmitResult) -> None:
@@ -637,6 +985,13 @@ def write_result_line(output: TextIO, result: SubmitResult) -> None:
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def effective_concurrency(args: argparse.Namespace) -> int:
+    if args.concurrency is not None:
+        return args.concurrency
+    if args.workers is not None:
+        return args.workers
+    return 4
 
 
 def print_summary(summary: dict) -> None:
@@ -652,13 +1007,13 @@ def print_summary(summary: dict) -> None:
     print(f"- Failure count: {summary['failure_count']}")
     print(f"- Failure rate: {summary['failure_rate']:.4%}")
     print(f"- Status counts: {json.dumps(summary['status_counts'], ensure_ascii=False)}")
-    print(f"- Latency avg: {latency['avg']:.2f} ms")
-    print(f"- Latency p50 est: {latency['p50_est']:.2f} ms")
-    print(f"- Latency p95 est: {latency['p95_est']:.2f} ms")
-    print(f"- Latency p99 est: {latency['p99_est']:.2f} ms")
-    print(f"- Latency min/max: {latency['min']:.2f}/{latency['max']:.2f} ms")
+    print(f"- End-to-end latency avg: {latency['avg']:.2f} ms")
+    print(f"- End-to-end latency p50 est: {latency['p50_est']:.2f} ms")
+    print(f"- End-to-end latency p95 est: {latency['p95_est']:.2f} ms")
+    print(f"- End-to-end latency p99 est: {latency['p99_est']:.2f} ms")
+    print(f"- End-to-end latency min/max: {latency['min']:.2f}/{latency['max']:.2f} ms")
     print(
-        "- Latency sample: "
+        "- End-to-end latency sample: "
         f"{latency['sample_size']} ({latency['sample_coverage']:.2%} of all requests)"
     )
     if summary["failed_examples"]:
@@ -668,8 +1023,22 @@ def print_summary(summary: dict) -> None:
 
 
 def validate_args(args: argparse.Namespace) -> int:
-    if args.workers < 1:
+    if args.concurrency is not None and args.concurrency < 1:
+        print("--concurrency must be >= 1", file=sys.stderr)
+        return 2
+    if args.workers is not None and args.workers < 1:
         print("--workers must be >= 1", file=sys.stderr)
+        return 2
+    if (
+        args.concurrency is not None
+        and args.workers is not None
+        and args.concurrency != args.workers
+    ):
+        print(
+            "--concurrency and --workers were both set with different values; "
+            "use only --concurrency to avoid ambiguity.",
+            file=sys.stderr,
+        )
         return 2
     if args.max_inflight < 0:
         print("--max-inflight must be >= 0", file=sys.stderr)
@@ -686,6 +1055,15 @@ def validate_args(args: argparse.Namespace) -> int:
     if args.records_per_request > API_MAX_RECORDS_PER_REQUEST:
         print(
             f"--records-per-request must be <= {API_MAX_RECORDS_PER_REQUEST}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.stream_batch_size < 1:
+        print("--stream-batch-size must be >= 1", file=sys.stderr)
+        return 2
+    if args.stream_batch_size > MAX_STREAM_BATCH_SIZE:
+        print(
+            f"--stream-batch-size must be <= {MAX_STREAM_BATCH_SIZE}",
             file=sys.stderr,
         )
         return 2
@@ -707,6 +1085,18 @@ def validate_args(args: argparse.Namespace) -> int:
     if args.wait_timeout <= 0:
         print("--wait-timeout must be > 0", file=sys.stderr)
         return 2
+    if args.poll_interval <= 0:
+        print("--poll-interval must be > 0", file=sys.stderr)
+        return 2
+    if args.completion_timeout < 0:
+        print("--completion-timeout must be >= 0", file=sys.stderr)
+        return 2
+    if args.top_k < 1:
+        print("--top-k must be >= 1", file=sys.stderr)
+        return 2
+    if args.threshold < 0 or args.threshold > 1:
+        print("--threshold must be between 0 and 1", file=sys.stderr)
+        return 2
     if args.stall_report_seconds < 0:
         print("--stall-report-seconds must be >= 0", file=sys.stderr)
         return 2
@@ -719,7 +1109,7 @@ def validate_args(args: argparse.Namespace) -> int:
     if args.latency_sample_size < 1:
         print("--latency-sample-size must be >= 1", file=sys.stderr)
         return 2
-    if not args.dry_run and (not args.username or not args.password):
+    if not args.direct_sse_url and not args.dry_run and (not args.username or not args.password):
         print("--username and --password are required unless --dry-run is used.", file=sys.stderr)
         return 2
     return 0
@@ -727,21 +1117,22 @@ def validate_args(args: argparse.Namespace) -> int:
 
 def run_stress_test(
     args: argparse.Namespace,
-    token: str,
+    token: str | None,
     base_records: list[SequenceRecord],
     planned_total_requests: int,
     planned_total_sequences: int,
 ) -> dict:
     stats = BenchmarkStats(args.latency_sample_size)
-    max_inflight = args.max_inflight if args.max_inflight > 0 else args.workers * 4
-    max_inflight = max(max_inflight, args.workers)
+    concurrency = effective_concurrency(args)
+    max_inflight = concurrency
     progress_bar = None
     use_tqdm = tqdm is not None and not args.no_tqdm
+    start_gate = threading.Event() if not args.no_start_gate else None
 
     if use_tqdm:
         progress_bar = tqdm(
             total=planned_total_requests,
-            desc="Submitting requests",
+            desc=f"Completing ({concurrency} concurrent)",
             unit="req",
             dynamic_ncols=True,
         )
@@ -775,7 +1166,7 @@ def run_stress_test(
     )
 
     try:
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
             inflight: set[Future[SubmitResult]] = set()
             future_context: dict[Future[SubmitResult], RequestBatch] = {}
             submitted = 0
@@ -789,11 +1180,33 @@ def run_stress_test(
                 except StopIteration:
                     return False
                 future = executor.submit(
-                    submit_batch,
-                    args.api_base_url,
-                    token,
-                    batch,
-                    args.timeout,
+                    submit_direct_sse_batch if args.direct_sse_url else submit_and_wait_batch,
+                    **(
+                        {
+                            "direct_sse_url": args.direct_sse_url,
+                            "batch": batch,
+                            "timeout": args.timeout,
+                            "model": args.model,
+                            "top_k": args.top_k,
+                            "threshold": args.threshold,
+                            "stream_batch_size": args.stream_batch_size,
+                            "include_branch_predictions": args.include_branch_predictions,
+                            "start_gate": start_gate,
+                        }
+                        if args.direct_sse_url
+                        else {
+                            "api_base_url": args.api_base_url,
+                            "token": token,
+                            "batch": batch,
+                            "timeout": args.timeout,
+                            "model": args.model,
+                            "top_k": args.top_k,
+                            "threshold": args.threshold,
+                            "poll_interval": args.poll_interval,
+                            "completion_timeout": args.completion_timeout,
+                            "start_gate": start_gate,
+                        }
+                    ),
                 )
                 inflight.add(future)
                 future_context[future] = batch
@@ -803,6 +1216,8 @@ def run_stress_test(
             initial_inflight = min(max_inflight, planned_total_requests)
             for _ in range(initial_inflight):
                 submit_next()
+            if start_gate is not None:
+                start_gate.set()
 
             while inflight:
                 completed_futures, inflight = wait(
@@ -819,11 +1234,11 @@ def run_stress_test(
                         stalled_for = now - last_completion_at
                         emit_line(
                             "[heartbeat] "
-                            f"completed={stats.total}/{planned_total_requests} "
+                            f"terminal={stats.total}/{planned_total_requests} "
                             f"submitted={submitted}/{planned_total_requests} "
                             f"seq_completed={stats.total_sequences}/{planned_total_sequences} "
-                            f"inflight={len(inflight)} "
-                            f"stalled_for={stalled_for:.1f}s"
+                            f"active={len(inflight)} "
+                            f"no_terminal_for={stalled_for:.1f}s"
                         )
                         last_heartbeat_at = now
                     continue
@@ -876,7 +1291,10 @@ def run_stress_test(
                         emit_line(
                             f"[{completed}/{planned_total_requests}] {result.request_label}: "
                             f"{result.status} ({result.latency_ms:.0f} ms, "
-                            f"records={result.record_count})"
+                            f"submit/first_event={result.submit_latency_ms or 0:.0f} ms, "
+                            f"polls={result.poll_count}, records={result.record_count}, "
+                            f"batches={result.batch_count}, preds={result.prediction_count}, "
+                            f"stage={result.stage_name or '-'})"
                         )
 
                     if args.checkpoint_every > 0 and (
@@ -940,14 +1358,29 @@ def main() -> int:
         planned_total_sequences = len(base_records) * args.repeat
         planned_total_requests = math.ceil(planned_total_sequences / args.records_per_request)
 
-    max_inflight = args.max_inflight if args.max_inflight > 0 else args.workers * 4
-    max_inflight = max(max_inflight, args.workers)
+    concurrency = effective_concurrency(args)
+    max_inflight = concurrency
 
     print(f"Loaded {len(base_records)} base sequence records from {args.input_dir}.")
+    if args.direct_sse_url:
+        print(f"Mode: direct Modal SSE ({args.direct_sse_url}).")
+        print(f"Stream batch size: {args.stream_batch_size}.")
+    else:
+        print(f"Mode: Serving API ({args.api_base_url.rstrip('/')}/api/inference-requests).")
     print(f"Records per request: {args.records_per_request}.")
+    print(f"Model / Top K / Threshold: {args.model} / {args.top_k} / {args.threshold}.")
     print(f"Planned requests: {planned_total_requests}.")
     print(f"Planned sequences: {planned_total_sequences}.")
-    print(f"Workers: {args.workers}, max in-flight futures: {max_inflight}.")
+    print(
+        f"Concurrency: {concurrency} end-to-end request(s), "
+        f"max active futures: {max_inflight}."
+    )
+    if args.max_inflight > concurrency:
+        print("Note: --max-inflight is ignored above --concurrency in completion-wait mode.")
+    if args.workers is not None:
+        print("Note: --workers is deprecated; use --concurrency for new runs.")
+    if not args.no_start_gate:
+        print("Start gate: enabled for the first concurrency wave.")
     heartbeat_text = (
         "disabled"
         if args.stall_report_seconds == 0
@@ -957,23 +1390,38 @@ def main() -> int:
         "Wait timeout / stall heartbeat: "
         f"{args.wait_timeout:.1f}s / {heartbeat_text}."
     )
+    completion_timeout_text = (
+        "disabled"
+        if args.completion_timeout == 0
+        else f"{args.completion_timeout:.1f}s"
+    )
+    print(
+        (
+            "Direct SSE completion: waits for done/error event."
+            if args.direct_sse_url
+            else "Completion polling: "
+            f"every {args.poll_interval:.1f}s, timeout {completion_timeout_text}."
+        )
+    )
 
     if args.dry_run:
         print("Dry run: no API calls will be made.")
         return 0
 
-    try:
-        token = login_with_retry(
-            args.api_base_url,
-            args.username,
-            args.password,
-            args.login_timeout,
-            args.login_retries,
-            args.login_retry_delay,
-        )
-    except RuntimeError as error:
-        print(str(error), file=sys.stderr)
-        return 1
+    token: str | None = None
+    if not args.direct_sse_url:
+        try:
+            token = login_with_retry(
+                args.api_base_url,
+                args.username,
+                args.password,
+                args.login_timeout,
+                args.login_retries,
+                args.login_retry_delay,
+            )
+        except RuntimeError as error:
+            print(str(error), file=sys.stderr)
+            return 1
     summary = run_stress_test(
         args=args,
         token=token,

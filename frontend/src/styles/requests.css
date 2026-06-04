@@ -428,6 +428,50 @@
   font-family: var(--body);
 }
 
+.sequence-section {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.sequence-section-header {
+  align-items: end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.sequence-section-header div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.sequence-section-header span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sequence-section-header strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 1rem;
+}
+
+.sequence-section-header small,
+.sequence-empty {
+  color: var(--text-muted);
+}
+
+.sequence-empty {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+  padding: 1rem;
+}
+
 .sequence-view {
   background: #f8fafc;
   border: 1px solid var(--border);
@@ -624,6 +668,7 @@
 }
 
 .app-shell[data-theme='dark'] .sequence-view,
+.app-shell[data-theme='dark'] .sequence-empty,
 .app-shell[data-theme='dark'] .result-summary,
 .app-shell[data-theme='dark'] .term-definition {
   background: rgba(2, 6, 23, 0.38);
@@ -1205,9 +1250,24 @@
   width: 100%;
 }
 
+.protein-result-pagination {
+  margin-top: 0.85rem;
+}
+
+.go-term-table-wrap {
+  overflow-x: auto;
+  width: 100%;
+}
+
 .protein-result-table {
   border-collapse: collapse;
   min-width: 820px;
+  width: 100%;
+}
+
+.go-term-table {
+  border-collapse: collapse;
+  min-width: 920px;
   width: 100%;
 }
 
@@ -1288,23 +1348,39 @@
 }
 
 .protein-result-table th,
-.protein-result-table td {
+.protein-result-table td,
+.go-term-table th,
+.go-term-table td {
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 0.6rem;
   text-align: left;
   vertical-align: middle;
 }
 
-.protein-result-table th {
+.protein-result-table th,
+.go-term-table th {
   color: var(--text-muted);
   font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.protein-result-table td {
+.protein-result-table td,
+.go-term-table td {
   color: var(--text);
   font-size: 0.9rem;
+}
+
+.go-term-table td:last-child {
+  color: var(--text-muted);
+  line-height: 1.45;
+  min-width: 22rem;
+}
+
+.table-footnote {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0.75rem 0 0;
 }
 
 .protein-id-cell {
@@ -1324,6 +1400,15 @@
 .protein-open-button {
   font-size: 0.82rem;
   min-width: 4.6rem;
+}
+
+.protein-result-empty {
+  color: var(--text-muted);
+  display: inline-block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  min-width: 4.6rem;
+  text-align: center;
 }
 
 .link-button {

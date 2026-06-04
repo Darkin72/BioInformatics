@@ -3,7 +3,7 @@ import type { DashboardLiveSnapshot, DashboardSummary } from '../../shared/types
 
 export function getDashboardSummary() {
   return apiRequest<DashboardSummary>(
-    '/api/metrics/pipeline/summary?window=minute',
+    '/api/metrics/pipeline/summary?window=minute&request_limit=200',
   )
 }
 

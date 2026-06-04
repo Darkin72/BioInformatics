@@ -11,9 +11,9 @@ APP_NAME = "cafa6-graph-aware-streaming-endpoint"
 ARTIFACT_VOLUME_NAME = "cafa6-artifacts"
 HF_CACHE_VOLUME_NAME = "cafa6-hf-cache"
 ARTIFACT_DIR = "/models/cafa6_graph_aware_artifacts"
-MAX_RECORDS_PER_REQUEST = 64
-DEFAULT_STREAM_BATCH_SIZE = 8
-MAX_STREAM_BATCH_SIZE = 32
+MAX_RECORDS_PER_REQUEST = 400
+DEFAULT_STREAM_BATCH_SIZE = 400
+MAX_STREAM_BATCH_SIZE = 400
 
 app = modal.App(APP_NAME)
 

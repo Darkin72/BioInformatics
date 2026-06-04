@@ -141,7 +141,7 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       void loadSummary(false)
-    }, 2000)
+    }, 10000)
 
     return () => window.clearInterval(intervalId)
   }, [])
@@ -215,6 +215,10 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
   const cassandraEntries = Object.entries(cassandraWriteTables).sort(
     ([, left], [, right]) => right - left,
   )
+  const cassandraWriteTotal = cassandraEntries.reduce(
+    (total, [, writes]) => total + writes,
+    0,
+  )
   const maxCassandraWrites = Math.max(
     1,
     ...cassandraEntries.map(([, writes]) => writes),
@@ -243,7 +247,7 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
         <div>
           <span>Kafka topics</span>
           <strong>{summary.kafka_topics.length}</strong>
-          <small>observed streams</small>
+          <small>configured event topics</small>
         </div>
         <div>
           <span>Stream</span>
@@ -252,8 +256,8 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
         </div>
         <div>
           <span>Cassandra writes</span>
-          <strong>{cassandraEntries.length}</strong>
-          <small>serving tables</small>
+          <strong>{cassandraWriteTotal.toLocaleString()}</strong>
+          <small>{cassandraEntries.length} serving tables</small>
         </div>
         <div>
           <span>P95 latency</span>
@@ -279,7 +283,7 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
           value={formatPercent(summary.error_rate)}
         />
         <MetricCard
-          detail={`${summary.kafka_topics.length} topics observed`}
+          detail={summary.kafka_topics.join(', ')}
           label="Kafka stream"
           value={streamState === 'live' ? 'Live' : 'Waiting'}
         />
@@ -468,7 +472,7 @@ export function DashboardPage({ isAdmin, navigate }: DashboardPageProps) {
         <section className="panel">
           <div className="section-header compact">
             <h2>Query patterns</h2>
-            <span>Cassandra reads are modeled before tables</span>
+            <span>Kafka topics are configured event channels</span>
           </div>
           <div className="tag-list">
             {cassandraPatterns.map((pattern) => (

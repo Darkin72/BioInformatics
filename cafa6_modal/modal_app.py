@@ -7,7 +7,7 @@ APP_NAME = "cafa6-ensemble-endpoint"
 ARTIFACT_VOLUME_NAME = "cafa6-artifacts"
 HF_CACHE_VOLUME_NAME = "cafa6-hf-cache"
 ARTIFACT_DIR = "/models/cafa6_high_performance_artifacts"
-MAX_RECORDS_PER_REQUEST = 64
+MAX_RECORDS_PER_REQUEST = 400
 
 app = modal.App(APP_NAME)
 

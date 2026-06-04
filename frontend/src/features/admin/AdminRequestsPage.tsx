@@ -45,12 +45,13 @@ const tableOptions = [
   },
 ]
 
+const REQUEST_TABLE_PAGE_SIZE = 10
+
 export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
   const [table, setTable] = useState('requests_by_day')
   const [status, setStatus] = useState('')
   const [username, setUsername] = useState('')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
   const [remote, setRemote] = useState<AdminRequestList | null>(null)
   const [timeline, setTimeline] = useState<RequestTimelineEvent[]>([])
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
@@ -70,7 +71,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
           status,
           username: username.trim() || undefined,
           page,
-          pageSize,
+          pageSize: REQUEST_TABLE_PAGE_SIZE,
         }),
       )
       setError(null)
@@ -85,7 +86,7 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
         setIsLoading(false)
       }
     }
-  }, [table, status, username, page, pageSize])
+  }, [table, status, username, page])
 
   async function openTimeline(requestId: string) {
     setSelectedRequestId(requestId)
@@ -235,22 +236,6 @@ export function AdminRequestsPage({ navigate }: AdminRequestsPageProps) {
               setPage(1)
             }}
           />
-        </label>
-        <label>
-          Page size
-          <select
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value))
-              setPage(1)
-            }}
-          >
-            {[10, 25, 50, 100].map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
         </label>
       </section>
 

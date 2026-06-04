@@ -40,7 +40,7 @@ export function getMyRequests(params: {
   const search = new URLSearchParams()
   search.set('days', String(params.days ?? 30))
   search.set('page', String(params.page ?? 1))
-  search.set('page_size', String(params.pageSize ?? 25))
+  search.set('page_size', String(params.pageSize ?? 10))
   return apiRequest<UserRequestList>(`/api/my/requests?${search}`)
 }
 

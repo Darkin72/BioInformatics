@@ -21,7 +21,7 @@ interface RequestStatusPageProps {
 type CollapsibleSectionKey = 'input' | 'prediction' | 'metadata'
 
 const pollingStatuses = new Set(['pending', 'processing', 'retrying'])
-const proteinTablePageSizes = [25, 50, 100]
+const proteinResultPageSize = 10
 const modalStepOrder = [
   'normalize_input',
   'batch_started',
@@ -78,6 +78,45 @@ function formatOntology(ontology?: string | null) {
     return 'Cellular Component'
   }
   return ontology ?? '-'
+}
+
+function sortTermsByConfidence(terms: PredictionTerm[]) {
+  return [...terms].sort((left, right) => right.score - left.score)
+}
+
+function GoTermTable({ terms }: { terms: PredictionTerm[] }) {
+  const sortedTerms = sortTermsByConfidence(terms)
+
+  return (
+    <div className="go-term-table-wrap">
+      <table className="go-term-table">
+        <thead>
+          <tr>
+            <th>GO term</th>
+            <th>Name</th>
+            <th>Ontology</th>
+            <th>Confidence</th>
+            <th>Definition</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedTerms.map((term, index) => (
+            <tr key={`${term.term_id}-${term.ontology ?? ''}-${index}`}>
+              <td>
+                <strong className="protein-id-cell">{term.term_id}</strong>
+              </td>
+              <td>{term.term_name ?? 'Unnamed ontology term'}</td>
+              <td>{formatOntology(term.ontology)}</td>
+              <td>
+                <strong>{formatScore(term.score)}</strong>
+              </td>
+              <td>{term.definition ?? '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -176,6 +215,10 @@ function mergeRequestEvents(
 function isChunkScopedEvent(event: RequestStreamEvent) {
   const data = getModalData(event)
   return Number(data.total_chunks ?? 0) > 1 || data.chunk_index !== undefined
+}
+
+function isBatchProteinId(proteinId?: string | null) {
+  return String(proteinId ?? '').toLowerCase().startsWith('batch:')
 }
 
 function buildStreamMonitor(
@@ -349,18 +392,17 @@ function buildStreamMonitor(
   if (progressPercent >= 50 || streamFinished) {
     simplifiedSeenSteps.add('calculating')
   }
+  const latestStepLabel = latest
+    ? formatModalLabel(
+        getModalStep(latest) || latest.payload.stage_name || getModalEvent(latest),
+      )
+    : 'Waiting for stream'
 
   return {
     activeLabel: latest
       ? streamFinished
         ? formatModalLabel('prediction_written')
-        : progressPercent >= 50
-          ? 'Calculating'
-          : progressPercent >= 25
-            ? 'Batch queued'
-            : progressPercent > 0
-              ? 'Normalize input'
-              : formatModalLabel(getModalStep(latest) || latest.payload.stage_name || getModalEvent(latest))
+        : latestStepLabel
       : 'Waiting for stream',
     activeStep,
     batchLabel: `${Math.max(0, Math.min(batchIndex + 1, totalBatches))} / ${totalBatches}`,
@@ -376,79 +418,6 @@ function buildStreamMonitor(
     streamFinished,
     totalRecords: Number.isFinite(totalRecords) ? totalRecords : 1,
   }
-}
-
-function mapPredictionRow(row: Record<string, unknown>): PredictionTerm | null {
-  const termId = String(row.go_term ?? row.term_id ?? '').trim()
-  if (!termId) {
-    return null
-  }
-
-  return {
-    term_id: termId,
-    term_name: typeof row.name === 'string'
-      ? row.name
-      : typeof row.term_name === 'string'
-        ? row.term_name
-        : undefined,
-    ontology: typeof row.aspect === 'string'
-      ? (row.aspect as PredictionTerm['ontology'])
-      : typeof row.ontology === 'string'
-        ? (row.ontology as PredictionTerm['ontology'])
-        : undefined,
-    score: Number(row.score ?? 0),
-  }
-}
-
-function termsFromRows(rows: unknown, proteinId?: string) {
-  if (!Array.isArray(rows)) {
-    return []
-  }
-
-  return rows
-    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
-    .filter((row) => !proteinId || !row.protein_id || String(row.protein_id) === proteinId)
-    .map(mapPredictionRow)
-    .filter((term): term is PredictionTerm => Boolean(term))
-    .sort((left, right) => right.score - left.score)
-}
-
-function buildSolutionResults(prediction: RequestResult['prediction']) {
-  if (!prediction) {
-    return []
-  }
-
-  const serverResult = asRecord(prediction.server_result)
-  const model = asRecord(serverResult.model)
-  const weights = asRecord(model.weights)
-  const branchPredictions = asRecord(serverResult.branch_predictions)
-  const primaryLabel = String(
-    model.name ?? prediction.model_version.replace(/^cafa6-modal-/, '') ?? 'ensemble',
-  )
-  const solutions: Array<{
-    label: string
-    role: string
-    terms: PredictionTerm[]
-    weight?: number
-  }> = [
-    {
-      label: primaryLabel,
-      role: 'Primary solution',
-      terms: prediction.top_terms,
-      weight: undefined,
-    },
-  ]
-
-  Object.entries(branchPredictions).forEach(([branch, rows]) => {
-    solutions.push({
-      label: branch,
-      role: 'Branch solution',
-      terms: termsFromRows(rows, prediction.protein_id),
-      weight: typeof weights[branch] === 'number' ? Number(weights[branch]) : undefined,
-    })
-  })
-
-  return solutions
 }
 
 function CollapseButton({
@@ -481,9 +450,8 @@ export function RequestStatusPage({
   navigate,
 }: RequestStatusPageProps) {
   const [streamEvents, setStreamEvents] = useState<RequestStreamEvent[]>([])
-  const [proteinPage, setProteinPage] = useState(1)
-  const [proteinPageSize, setProteinPageSize] = useState(25)
   const [isStreamLogOpen, setIsStreamLogOpen] = useState(false)
+  const [proteinResultPage, setProteinResultPage] = useState(1)
   const progressPeakRef = useRef({ requestId: '', value: 0 })
   const [openSections, setOpenSections] = useState<
     Record<CollapsibleSectionKey, boolean>
@@ -532,8 +500,8 @@ export function RequestStatusPage({
 
     setRemoteState({ requestId: '', result: null, error: null })
     setStreamEvents([])
-    setProteinPage(1)
     setIsStreamLogOpen(false)
+    setProteinResultPage(1)
     progressPeakRef.current = { requestId, value: 0 }
 
     loadRequestResult()
@@ -606,8 +574,14 @@ export function RequestStatusPage({
   const proteinResults = result?.protein_results ?? []
   const requestInput = result?.input ?? null
   const inputRecords = requestInput?.records ?? []
-  const hasProteinTable = inputRecords.length > 1 || proteinResults.length > 1
-  const topTerm = prediction?.top_terms[0] ?? null
+  const proteinInputRecords = inputRecords.filter(
+    (record) => !isBatchProteinId(record.protein_id),
+  )
+  const displayedProteinResults = proteinResults.filter(
+    (item) => !isBatchProteinId(item.protein_id),
+  )
+  const displayedProteinCount = proteinInputRecords.length || displayedProteinResults.length
+  const hasProteinTable = displayedProteinCount > 1
   const predictedAt = prediction?.predicted_at
     ? formatDateTime(prediction.predicted_at)
     : null
@@ -641,32 +615,38 @@ export function RequestStatusPage({
   const shouldShowStreamProgress =
     streamEvents.length > 0 || isAwaitingPrediction || request.current_status === 'completed'
   const streamRecordCount =
-    inputRecords.length || proteinResults.length || streamMonitor.totalRecords
+    displayedProteinCount || streamMonitor.totalRecords
   const streamModelName =
     request.model_version?.replace(/^cafa6-modal-/, '') || streamMonitor.modelName
-  const solutionResults = buildSolutionResults(prediction)
   const inputMetadata = asRecord(requestInput?.metadata)
-  const requestProteinIds = inputRecords.map((record) => record.protein_id)
-  const proteinRows = (inputRecords.length ? inputRecords : proteinResults.map((item) => ({
+  const requestProteinIds = proteinInputRecords.map((record) => record.protein_id)
+  const inputProteinCount = displayedProteinCount || Number(
+    inputMetadata.fasta_record_count ?? inputMetadata.protein_count ?? 0,
+  )
+  const proteinRows = (proteinInputRecords.length ? proteinInputRecords : displayedProteinResults.map((item) => ({
     protein_id: item.protein_id,
     sequence_length: null,
     description: null,
   }))).map((record) => ({
     ...record,
-    prediction: proteinResults.find(
+    prediction: displayedProteinResults.find(
       (item) => item.protein_id.toLowerCase() === record.protein_id.toLowerCase(),
     ),
   }))
   const predictionRows = proteinRows.filter((row) => Boolean(row.prediction))
-  const proteinTotalPages = Math.max(1, Math.ceil(predictionRows.length / proteinPageSize))
-  const boundedProteinPage = Math.min(proteinPage, proteinTotalPages)
-  const proteinStartIndex = (boundedProteinPage - 1) * proteinPageSize
-  const visiblePredictionRows = predictionRows.slice(
-    proteinStartIndex,
-    proteinStartIndex + proteinPageSize,
+  const proteinResultPageCount = Math.max(
+    1,
+    Math.ceil(proteinRows.length / proteinResultPageSize),
   )
-  const proteinRangeStart = predictionRows.length ? proteinStartIndex + 1 : 0
-  const proteinRangeEnd = Math.min(predictionRows.length, proteinStartIndex + proteinPageSize)
+  const activeProteinResultPage = Math.min(
+    proteinResultPage,
+    proteinResultPageCount,
+  )
+  const proteinResultStartIndex = (activeProteinResultPage - 1) * proteinResultPageSize
+  const paginatedProteinRows = proteinRows.slice(
+    proteinResultStartIndex,
+    proteinResultStartIndex + proteinResultPageSize,
+  )
   const visibleStreamEvents = isStreamLogOpen
     ? streamMonitor.events
     : []
@@ -676,55 +656,6 @@ export function RequestStatusPage({
       ...current,
       [section]: !current[section],
     }))
-  }
-
-  function renderProteinTableControls() {
-    if (predictionRows.length <= proteinTablePageSizes[0]) {
-      return null
-    }
-
-    return (
-      <div className="protein-table-controls">
-        <span>
-          Showing {proteinRangeStart}-{proteinRangeEnd} of {predictionRows.length}
-        </span>
-        <label>
-          Rows
-          <select
-            onChange={(event) => {
-              setProteinPageSize(Number(event.target.value))
-              setProteinPage(1)
-            }}
-            value={proteinPageSize}
-          >
-            {proteinTablePageSizes.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="secondary-button"
-          disabled={boundedProteinPage <= 1}
-          onClick={() => setProteinPage((page) => Math.max(1, page - 1))}
-          type="button"
-        >
-          Previous
-        </button>
-        <span>
-          Page {boundedProteinPage} / {proteinTotalPages}
-        </span>
-        <button
-          className="secondary-button"
-          disabled={boundedProteinPage >= proteinTotalPages}
-          onClick={() => setProteinPage((page) => Math.min(proteinTotalPages, page + 1))}
-          type="button"
-        >
-          Next
-        </button>
-      </div>
-    )
   }
 
   return (
@@ -845,7 +776,7 @@ export function RequestStatusPage({
           <h2>Request input</h2>
           <span>
             {hasProteinTable
-              ? `${inputRecords.length || proteinResults.length} proteins`
+              ? `${inputProteinCount} proteins`
               : requestInput?.sequence_length
                 ? `${requestInput.sequence_length} amino acids`
                 : 'Input summary'}
@@ -886,7 +817,7 @@ export function RequestStatusPage({
               </div>
               <div className="request-input-card">
                 <span>FASTA</span>
-                <strong>{formatMetadataValue(inputMetadata.fasta_record_count ?? inputMetadata.protein_count)}</strong>
+                <strong>{formatMetadataValue(inputProteinCount || inputMetadata.fasta_record_count)}</strong>
                 <small title={String(inputMetadata.fasta_description ?? '')}>
                   {inputMetadata.fasta_description
                     ? formatMetadataValue(inputMetadata.fasta_description)
@@ -910,17 +841,16 @@ export function RequestStatusPage({
 
         {(
           <>
-            {hasProteinTable && predictionRows.length ? (
+            {hasProteinTable && proteinRows.length ? (
               <>
-                {renderProteinTableControls()}
                 <div className="prediction-result-summary">
                   <div>
-                    <span>Predicted proteins</span>
-                    <strong>{predictionRows.length}</strong>
+                    <span>Records shown</span>
+                    <strong>{proteinRows.length}</strong>
                   </div>
                   <div>
-                    <span>Total proteins</span>
-                    <strong>{proteinRows.length}</strong>
+                    <span>With GO terms</span>
+                    <strong>{predictionRows.length}</strong>
                   </div>
                   <div>
                     <span>Coverage</span>
@@ -936,26 +866,19 @@ export function RequestStatusPage({
                     <thead>
                       <tr>
                         <th>Protein ID</th>
-                        <th>Top GO term</th>
-                        <th>Ontology</th>
-                        <th>Score</th>
                         <th>Terms</th>
                         <th className="protein-result-action-heading">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {visiblePredictionRows.map((row) => {
-                        const bestTerm = row.prediction?.top_terms[0] ?? null
-                        return (
-                          <tr key={`prediction-${row.protein_id}`}>
-                            <td>
-                              <strong className="protein-id-cell">{row.protein_id}</strong>
-                            </td>
-                            <td>{bestTerm?.term_id ?? '-'}</td>
-                            <td>{bestTerm ? formatOntology(bestTerm.ontology) : '-'}</td>
-                            <td>{bestTerm ? formatScore(bestTerm.score) : '-'}</td>
-                            <td>{row.prediction?.top_terms.length ?? 0}</td>
-                            <td className="protein-result-action-cell">
+                      {paginatedProteinRows.map((row) => (
+                        <tr key={`prediction-${row.protein_id}`}>
+                          <td>
+                            <strong className="protein-id-cell">{row.protein_id}</strong>
+                          </td>
+                          <td>{row.prediction?.top_terms.length ?? 0}</td>
+                          <td className="protein-result-action-cell">
+                            {row.prediction ? (
                               <button
                                 className="secondary-button compact-button protein-open-button"
                                 onClick={() =>
@@ -967,12 +890,44 @@ export function RequestStatusPage({
                               >
                                 Open
                               </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
+                            ) : (
+                              <span className="protein-result-empty">No terms</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
+                </div>
+                <div className="pagination-row protein-result-pagination">
+                  <button
+                    className="secondary-button compact-button"
+                    disabled={activeProteinResultPage <= 1}
+                    onClick={() =>
+                      setProteinResultPage((current) => Math.max(1, current - 1))
+                    }
+                    type="button"
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {activeProteinResultPage} of {proteinResultPageCount} | Showing{' '}
+                    {proteinRows.length ? proteinResultStartIndex + 1 : 0}-
+                    {Math.min(proteinResultStartIndex + proteinResultPageSize, proteinRows.length)} of{' '}
+                    {proteinRows.length} records
+                  </span>
+                  <button
+                    className="secondary-button compact-button"
+                    disabled={activeProteinResultPage >= proteinResultPageCount}
+                    onClick={() =>
+                      setProteinResultPage((current) =>
+                        Math.min(proteinResultPageCount, current + 1),
+                      )
+                    }
+                    type="button"
+                  >
+                    Next
+                  </button>
                 </div>
               </>
             ) : hasProteinTable ? (
@@ -991,24 +946,12 @@ export function RequestStatusPage({
                     : 'No per-protein predictions were stored for this request. Older completed requests may need to be submitted again after the per-protein persistence fix.'}
                 </p>
               </div>
-            ) : prediction && topTerm ? (
+            ) : prediction?.top_terms.length ? (
               <div className="prediction-result">
-                <div className="prediction-highlight">
-                  <div>
-                    <span>Top GO term</span>
-                    <strong>{topTerm.term_id}</strong>
-                    <p>{topTerm.term_name ?? 'Unnamed ontology term'}</p>
-                  </div>
-                </div>
-
                 <dl className="prediction-summary">
                   <div>
                     <dt>Protein</dt>
                     <dd>{prediction.protein_id}</dd>
-                  </div>
-                  <div>
-                    <dt>Ontology</dt>
-                    <dd>{formatOntology(topTerm.ontology)}</dd>
                   </div>
                   <div>
                     <dt>Model</dt>
@@ -1020,51 +963,7 @@ export function RequestStatusPage({
                   </div>
                 </dl>
 
-                {solutionResults.length > 1 ? (
-                  <div className="solution-result-grid">
-                    {solutionResults.map((solution) => {
-                      const bestTerm = solution.terms[0]
-                      return (
-                        <section className="solution-result-card" key={solution.label}>
-                          <div className="solution-result-header">
-                            <div>
-                              <span>{solution.role}</span>
-                              <strong>{solution.label}</strong>
-                            </div>
-                            {solution.weight !== undefined ? (
-                              <em>{formatScore(solution.weight)}</em>
-                            ) : null}
-                          </div>
-                          {bestTerm ? (
-                            <>
-                              <div className="solution-top-term">
-                                <strong>{bestTerm.term_id}</strong>
-                                <span>{formatScore(bestTerm.score)}</span>
-                              </div>
-                              <p>{bestTerm.term_name ?? 'Unnamed ontology term'}</p>
-                              <div className="score-track">
-                                <div
-                                  style={{
-                                    width: `${Math.max(0, Math.min(100, bestTerm.score * 100))}%`,
-                                  }}
-                                />
-                              </div>
-                              <div className="solution-term-list">
-                                {solution.terms.slice(1, 4).map((term) => (
-                                  <span key={`${solution.label}-${term.term_id}`}>
-                                    {term.term_id} {formatScore(term.score)}
-                                  </span>
-                                ))}
-                              </div>
-                            </>
-                          ) : (
-                            <p>No branch terms returned.</p>
-                          )}
-                        </section>
-                      )
-                    })}
-                  </div>
-                ) : null}
+                <GoTermTable terms={prediction.top_terms} />
 
                 {prediction.confidence_summary ? (
                   <p className="result-summary">{prediction.confidence_summary}</p>
@@ -1134,48 +1033,6 @@ export function RequestStatusPage({
               <EmptyState message="The server has not returned a result for this request yet." />
             )}
 
-            {!hasProteinTable && prediction?.top_terms.length ? (
-              <div className="label-result-grid">
-                {prediction.top_terms.map((term, index) => {
-                  const labelScorePercent = Math.max(
-                    0,
-                    Math.min(100, term.score * 100),
-                  )
-
-                  return (
-                    <section
-                      className="label-result-card"
-                      key={`${term.term_id}-${term.ontology ?? ''}-${index}`}
-                    >
-                      <div className="label-result-header">
-                        <span>Term {index + 1}</span>
-                        <strong>{formatScore(term.score)}</strong>
-                      </div>
-                      <div>
-                        <h3>{term.term_name ?? 'Unnamed ontology term'}</h3>
-                        <p className="mono">{term.term_id}</p>
-                      </div>
-                      {term.definition ? (
-                        <p className="term-definition">{term.definition}</p>
-                      ) : null}
-                      <dl className="label-result-details">
-                        <div>
-                          <dt>Ontology</dt>
-                          <dd>{formatOntology(term.ontology)}</dd>
-                        </div>
-                        <div>
-                          <dt>Confidence</dt>
-                          <dd>{formatScore(term.score)}</dd>
-                        </div>
-                      </dl>
-                      <div className="score-track">
-                        <div style={{ width: `${labelScorePercent}%` }} />
-                      </div>
-                    </section>
-                  )
-                })}
-              </div>
-            ) : null}
           </>
         )}
       </section>
@@ -1293,13 +1150,20 @@ export function RequestProteinDetailPage({
         const matchingRecord = requestResult?.input?.records?.find(
           (record) => record.protein_id.toLowerCase() === proteinId.toLowerCase(),
         )
+        const directInputRecord = requestResult?.input && !requestResult.input.records
+          ? {
+              sequence: requestResult.input.sequence,
+              sequence_length: requestResult.input.sequence_length,
+              description: null,
+            }
+          : null
         setPrediction(result.top_terms)
         setHeader({
           modelVersion: result.model_version,
           predictedAt: result.predicted_at,
           summary: result.confidence_summary,
         })
-        setInputRecord(matchingRecord ?? null)
+        setInputRecord(matchingRecord ?? directInputRecord ?? null)
       })
       .catch((loadError: unknown) => {
         if (!isActive) {
@@ -1370,43 +1234,26 @@ export function RequestProteinDetailPage({
           </div>
         </dl>
         {header.summary ? <p className="result-summary">{header.summary}</p> : null}
-        {inputRecord?.sequence ? (
-          <pre className="sequence-view">{inputRecord.sequence}</pre>
-        ) : null}
+        <div className="sequence-section">
+          <div className="sequence-section-header">
+            <div>
+              <span>Input sequence</span>
+              <strong>{inputRecord?.sequence_length ?? inputRecord?.sequence?.length ?? '-'} residues</strong>
+            </div>
+            {inputRecord?.description ? <small>{inputRecord.description}</small> : null}
+          </div>
+          {inputRecord?.sequence ? (
+            <pre className="sequence-view">{inputRecord.sequence}</pre>
+          ) : (
+            <p className="sequence-empty">
+              Sequence text was not stored for this older request; new requests store it in the request timeline.
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="panel">
-        <div className="label-result-grid">
-          {prediction.map((term, index) => (
-            <section
-              className="label-result-card"
-              key={`${term.term_id}-${term.ontology ?? ''}-${index}`}
-            >
-              <div className="label-result-header">
-                <span>Term {index + 1}</span>
-                <strong>{formatScore(term.score)}</strong>
-              </div>
-              <div>
-                <h3>{term.term_name ?? 'Unnamed ontology term'}</h3>
-                <p className="mono">{term.term_id}</p>
-              </div>
-              {term.definition ? <p className="term-definition">{term.definition}</p> : null}
-              <dl className="label-result-details">
-                <div>
-                  <dt>Ontology</dt>
-                  <dd>{formatOntology(term.ontology)}</dd>
-                </div>
-                <div>
-                  <dt>Confidence</dt>
-                  <dd>{formatScore(term.score)}</dd>
-                </div>
-              </dl>
-              <div className="score-track">
-                <div style={{ width: `${Math.max(0, Math.min(100, term.score * 100))}%` }} />
-              </div>
-            </section>
-          ))}
-        </div>
+        <GoTermTable terms={prediction} />
       </section>
     </section>
   )

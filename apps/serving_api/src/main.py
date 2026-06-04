@@ -48,7 +48,7 @@ APP_TIMEZONE = timezone(timedelta(hours=7))
 
 Role = str
 MAX_FASTA_RECORDS_PER_REQUEST = 400
-MODAL_RECORDS_PER_REQUEST = 100
+MODAL_RECORDS_PER_REQUEST = 20
 MAX_PARALLEL_MODAL_REQUESTS = 4
 
 
@@ -1118,16 +1118,25 @@ def chunk_request_records(
 ) -> list[list[RequestInputRecord]]:
     return [records[index:index + chunk_size] for index in range(0, len(records), chunk_size)]
 
-def input_records_payload(records: list[RequestInputRecord]) -> list[dict[str, Any]]:
-    return [
-        {
+def input_records_payload(
+    records: list[RequestInputRecord],
+    include_sequence: bool = False,
+) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for record in records:
+        item = {
             "protein_id": record.protein_id,
-            "sequence": record.sequence,
             "sequence_length": record.sequence_length,
             "description": record.description,
         }
-        for record in records
-    ]
+        if include_sequence:
+            item["sequence"] = record.sequence
+        payload.append(item)
+    return payload
+
+
+def inference_job_records_payload(records: list[RequestInputRecord]) -> list[dict[str, Any]]:
+    return input_records_payload(records, include_sequence=True)
 
 def latest_predictions(limit: int = 10) -> list[LatestPrediction]:
     return sorted(PREDICTIONS, key=lambda item: item.predicted_at, reverse=True)[:limit]
@@ -1700,6 +1709,16 @@ def publish_retry_command(
         publisher.close()
     except Exception:
         pass
+
+
+def publish_inference_command(payload: dict[str, Any]) -> None:
+    rabbit_config = RabbitMQConfig()
+    publisher = RabbitMQPublisher(rabbit_config.url, rabbit_config.exchange)
+    try:
+        publisher.declare_queue(rabbit_config.inference_queue, ["inference.submit"])
+        publisher.publish("inference.submit", payload)
+    finally:
+        publisher.close()
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -2977,7 +2996,7 @@ def create_inference_request(
         created_at=created_at,
         updated_at=created_at,
         current_status="processing",
-        stage_name="accepted",
+        stage_name="queued",
         retry_count=0,
     )
     normalized_sequence = records[0].sequence or ""
@@ -2997,24 +3016,34 @@ def create_inference_request(
         source=payload.source,
         metadata=request_metadata,
     )
-    upsert_memory_request(accepted)
-    threading.Thread(
-        target=process_cafa6_streaming_request,
-        kwargs={
+    publish_inference_command(
+        {
             "request_id": request_id,
             "protein_id": protein_id,
             "username": current_user.username,
             "source": payload.source,
-            "sequence": combined_sequence,
+            "created_at": created_at,
             "model_name": model_name,
             "top_k": payload.top_k,
             "threshold": payload.threshold,
             "metadata": request_metadata,
-            "created_at": created_at,
-            "records": records,
+            "records": inference_job_records_payload(records),
+            "retry_count": 0,
+        }
+    )
+    upsert_memory_request(accepted)
+    publish_request_status(
+        accepted,
+        username=current_user.username,
+        source=payload.source,
+        sequence=normalized_sequence if len(records) == 1 else "",
+        metadata=request_metadata,
+        extra_payload={
+            "modal_event": "queued",
+            "input_records": input_records_payload(records),
+            "queue_name": RabbitMQConfig().inference_queue,
         },
-        daemon=True,
-    ).start()
+    )
     return accepted
 
 
@@ -3030,6 +3059,16 @@ def get_inference_request(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="User does not have permission for this request",
                 )
+            reader = get_cassandra_reader()
+            if reader:
+                try:
+                    row = reader.get_request(request_id)
+                    if row:
+                        persisted_request = inference_request_from_row(row)
+                        if can_access_request(persisted_request, current_user):
+                            return persisted_request
+                except Exception:
+                    pass
             return request
 
     reader = get_cassandra_reader()
@@ -3063,9 +3102,14 @@ def get_inference_request_result(
     request = get_inference_request(request_id, current_user)
     request_input = REQUEST_INPUTS.get(request_id) or cassandra_input_for_request(request)
     protein_results = predictions_for_request(request_id)
-    if not protein_results:
+    should_lookup_persisted_predictions = request.current_status in {
+        "completed",
+        "failed",
+        "cancelled",
+    }
+    if should_lookup_persisted_predictions and not protein_results:
         protein_results = request_protein_predictions_from_cassandra(request_id, request_input)
-    if not protein_results:
+    if should_lookup_persisted_predictions and not protein_results:
         protein_results = request_protein_predictions_from_timeline(request_id)
     prediction = protein_results[0] if protein_results else (
         prediction_for_request(request_id) or cassandra_prediction_for_request(request)

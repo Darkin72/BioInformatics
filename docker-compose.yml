@@ -17,6 +17,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_INFERENCE_QUEUE: ${RABBITMQ_INFERENCE_QUEUE:-inference_jobs}
       RABBITMQ_RETRY_QUEUE: ${RABBITMQ_RETRY_QUEUE:-retry_inference}
       CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
       CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
@@ -109,6 +110,46 @@ services:
       CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
       CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
       CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  inference-worker:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: bioinformatics-inference-worker
+    command:
+      - python
+      - -m
+      - apps.inference_worker.src.main
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_REQUEST_STATUS_TOPIC: ${KAFKA_REQUEST_STATUS_TOPIC:-request_status}
+      KAFKA_PREDICTION_TOPIC: ${KAFKA_PREDICTION_TOPIC:-prediction_result}
+      KAFKA_DEAD_LETTER_TOPIC: ${KAFKA_DEAD_LETTER_TOPIC:-dead_letter}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://protein:protein@rabbitmq:5672/}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-command_exchange}
+      RABBITMQ_INFERENCE_QUEUE: ${RABBITMQ_INFERENCE_QUEUE:-inference_jobs}
+      INFERENCE_WORKER_PREFETCH: ${INFERENCE_WORKER_PREFETCH:-1}
+      INFERENCE_WORKER_RABBITMQ_HEARTBEAT: ${INFERENCE_WORKER_RABBITMQ_HEARTBEAT:-0}
+      INFERENCE_WORKER_BLOCKED_CONNECTION_TIMEOUT: ${INFERENCE_WORKER_BLOCKED_CONNECTION_TIMEOUT:-1800}
+      CASSANDRA_HOST: ${CASSANDRA_HOST:-cassandra}
+      CASSANDRA_PORT: ${CASSANDRA_PORT:-9042}
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-protein_rt}
+      CAFA6_HEALTH_URL: ${CAFA6_HEALTH_URL:-}
+      CAFA6_PREDICT_URL: ${CAFA6_PREDICT_URL:-}
+      CAFA6_GRAPH_AWARE_PREDICT_SSE_URL: ${CAFA6_GRAPH_AWARE_PREDICT_SSE_URL:-}
+      CAFA6_STREAM_PREDICT_SSE_URL: ${CAFA6_STREAM_PREDICT_SSE_URL:-}
+      CAFA6_STREAM_BATCH_SIZE: ${CAFA6_STREAM_BATCH_SIZE:-1}
+      CAFA6_STREAM_TIMEOUT_SECONDS: ${CAFA6_STREAM_TIMEOUT_SECONDS:-900}
+      CAFA6_TOP_K: ${CAFA6_TOP_K:-20}
+      CAFA6_TIMEOUT_SECONDS: ${CAFA6_TIMEOUT_SECONDS:-60}
     depends_on:
       cassandra:
         condition: service_healthy

@@ -326,18 +326,26 @@ class CassandraWriter:
         top_terms_payload = event.get("top_terms", [])
         top_terms: list[str] = []
         top_scores: list[float] = []
+        prediction_rows: list[str] = []
+        score_map: dict[str, float] = {}
         for item in top_terms_payload:
             if isinstance(item, dict):
-                top_terms.append(str(item.get("term_id", item.get("go_term", ""))))
-                top_scores.append(float(item.get("score", 0)))
+                term_id = str(item.get("term_id", item.get("go_term", "")))
+                score = float(item.get("score", 0))
+                top_terms.append(term_id)
+                top_scores.append(score)
+                score_map[term_id] = score
+                prediction_rows.append(json.dumps(item, default=json_default))
             else:
-                top_terms.append(str(item))
+                term_id = str(item)
+                top_terms.append(term_id)
+                score_map[term_id] = 0.0
         self._session.execute(
             """
             INSERT INTO latest_prediction_by_protein (
                 protein_id, request_id, predicted_at, model_version, top_terms,
-                top_scores, confidence_summary
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                top_scores, prediction_rows, confidence_summary
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 protein_id,
@@ -346,6 +354,7 @@ class CassandraWriter:
                 event.get("model_version"),
                 top_terms,
                 top_scores,
+                prediction_rows,
                 event.get("confidence_summary"),
             ),
         )
@@ -353,8 +362,8 @@ class CassandraWriter:
             """
             INSERT INTO prediction_history_by_protein (
                 protein_id, predicted_at, request_id, model_version, feature_version,
-                top_terms, top_scores, confidence_summary, latency_ms
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                predicted_terms, score_map, prediction_rows, threshold_used, latency_ms
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 protein_id,
@@ -363,8 +372,29 @@ class CassandraWriter:
                 event.get("model_version"),
                 event.get("feature_version"),
                 top_terms,
-                top_scores,
-                event.get("confidence_summary"),
+                score_map,
+                prediction_rows,
+                event.get("threshold"),
+                int(event.get("latency_ms", 0) or 0),
+            ),
+        )
+        self._session.execute(
+            """
+            INSERT INTO prediction_by_request (
+                request_id, protein_id, predicted_at, model_version, feature_version,
+                predicted_terms, score_map, prediction_rows, threshold_used, latency_ms
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                request_id,
+                protein_id,
+                predicted_at,
+                event.get("model_version"),
+                event.get("feature_version"),
+                top_terms,
+                score_map,
+                prediction_rows,
+                event.get("threshold"),
                 int(event.get("latency_ms", 0) or 0),
             ),
         )

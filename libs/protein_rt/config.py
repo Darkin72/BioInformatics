@@ -28,6 +28,7 @@ class KafkaConfig:
 class RabbitMQConfig:
     url: str = env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/%2F")
     exchange: str = env("RABBITMQ_EXCHANGE", "command_exchange")
+    inference_queue: str = env("RABBITMQ_INFERENCE_QUEUE", "inference_jobs")
     retry_queue: str = env("RABBITMQ_RETRY_QUEUE", "retry_inference")
     notification_queue: str = env("RABBITMQ_NOTIFICATION_QUEUE", "notification_queue")
 

@@ -8,6 +8,7 @@ resources:
   - data-services.yaml
   - init-jobs.yaml
   - app-services.yaml
+  - monitoring.yaml
 
 generatorOptions:
   disableNameSuffixHash: true

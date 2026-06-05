@@ -138,6 +138,10 @@ metadata:
 data:
   20-bioinformatics.conf: |
     cluster_partition_handling = pause_minority
+    cluster_formation.peer_discovery_backend = classic_config
+    cluster_formation.classic_config.nodes.1 = rabbit@rabbitmq-0.rabbitmq-headless.default.svc.cluster.local
+    cluster_formation.classic_config.nodes.2 = rabbit@rabbitmq-1.rabbitmq-headless.default.svc.cluster.local
+    cluster_formation.classic_config.nodes.3 = rabbit@rabbitmq-2.rabbitmq-headless.default.svc.cluster.local
     default_queue_type = quorum
 ---
 apiVersion: v1
@@ -210,26 +214,6 @@ spec:
                 secretKeyRef:
                   name: bioinformatics-secret
                   key: RABBITMQ_ERLANG_COOKIE
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - /bin/bash
-                  - -ec
-                  - |
-                    ordinal="${HOSTNAME##*-}"
-                    if [ "${ordinal}" = "0" ]; then
-                      exit 0
-                    fi
-                    seed="rabbit@rabbitmq-0.rabbitmq-headless.default.svc.cluster.local"
-                    until rabbitmq-diagnostics -q -n "${seed}" ping; do
-                      echo "Waiting for RabbitMQ seed ${seed}..."
-                      sleep 5
-                    done
-                    rabbitmqctl stop_app
-                    rabbitmqctl reset
-                    rabbitmqctl join_cluster "${seed}"
-                    rabbitmqctl start_app
           readinessProbe:
             exec:
               command: ["rabbitmq-diagnostics", "-q", "ping"]

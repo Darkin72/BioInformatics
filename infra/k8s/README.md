@@ -29,6 +29,7 @@ Từ root repo:
 Các manifest dùng những image local sau:
 
 - `bioinformatics/backend:local`
+- `bioinformatics/backend:metrics-local`
 - `bioinformatics/frontend:local`
 - `bioinformatics/spark-streaming:local`
 
@@ -62,6 +63,8 @@ kubectl port-forward svc/notification-service 8004:8003
 kubectl port-forward svc/rabbitmq 15673:15672
 kubectl port-forward svc/spark-master 8081:8080
 kubectl port-forward svc/spark-worker 8082:8081
+kubectl port-forward svc/prometheus 9090:9090
+kubectl port-forward svc/grafana 3000:3000
 ```
 
 Sau đó mở:
@@ -75,6 +78,10 @@ Sau đó mở:
 | RabbitMQ Management | `http://localhost:15673` |
 | Spark Master UI | `http://localhost:8081` |
 | Spark Worker UI | `http://localhost:8082` |
+| Prometheus | `http://localhost:9090` |
+| Grafana | `http://localhost:3000` |
+
+Grafana có datasource Prometheus và dashboard `FastAPI Serving API` để theo dõi Serving API. Serving API expose Prometheus metrics ở `/metrics`.
 
 Các service NodePort cũng được khai báo, nhưng Docker Desktop có thể không expose NodePort ra `localhost` tùy cấu hình cluster/network:
 
@@ -89,6 +96,8 @@ Các service NodePort cũng được khai báo, nhưng Docker Desktop có thể 
 | Spark Master UI | `http://localhost:30081` |
 | Spark Worker UI | `http://localhost:30082` |
 | Spark Streaming UI | `http://localhost:30040` |
+| Prometheus | `http://localhost:30090` |
+| Grafana | `http://localhost:30300` |
 
 ## Spark streaming job tùy chọn
 

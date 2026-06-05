@@ -18,10 +18,11 @@ from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel, ConfigDict
 
 from apps.serving_api.src.cafa6_client import (
@@ -278,6 +279,23 @@ security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
 REVOKED_TOKEN_IDS: set[str] = set()
 
+HTTP_REQUESTS_TOTAL = Counter(
+    "fastapi_requests_total",
+    "Total HTTP requests handled by the Serving API.",
+    ["method", "path", "status"],
+)
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "fastapi_request_duration_seconds",
+    "HTTP request latency in seconds for the Serving API.",
+    ["method", "path", "status"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+)
+HTTP_REQUESTS_IN_PROGRESS = Gauge(
+    "fastapi_requests_in_progress",
+    "HTTP requests currently being processed by the Serving API.",
+    ["method"],
+)
+
 
 class AppState:
     cassandra: CassandraStore | None = None
@@ -302,6 +320,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def metrics_path(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if path:
+        return str(path)
+    return request.url.path
+
+@app.middleware("http")
+async def prometheus_metrics_middleware(request: Request, call_next: Any) -> Response:
+    method = request.method
+    start_time = time.perf_counter()
+    HTTP_REQUESTS_IN_PROGRESS.labels(method=method).inc()
+    status_code = "500"
+    try:
+        response = await call_next(request)
+        status_code = str(response.status_code)
+        return response
+    finally:
+        path = metrics_path(request)
+        duration = time.perf_counter() - start_time
+        HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status=status_code).inc()
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method,
+            path=path,
+            status=status_code,
+        ).observe(duration)
+        HTTP_REQUESTS_IN_PROGRESS.labels(method=method).dec()
 
 
 def app_now() -> datetime:
@@ -1911,6 +1957,10 @@ def publish_inference_command(payload: dict[str, Any]) -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/v1/requests/{request_id}")

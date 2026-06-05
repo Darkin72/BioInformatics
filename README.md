@@ -84,6 +84,8 @@ PostgreSQL song song lưu metadata quản trị, model registry, replay campaign
 | Cassandra                  | Distributed serving store cho workload ghi nhiều, time-series, event log và prediction history.          |
 | PostgreSQL                 | Metadata store có transaction/constraint rõ ràng cho quản trị, model registry, replay campaign và audit. |
 | Modal                      | GPU model serving cho CAFA-6 ensemble/streaming endpoint.                                                |
+| Prometheus                 | Có trong stack Kubernetes local.                                                                         |
+| Grafana                    | Có trong stack Kubernetes local.                                                                         |
 | Kubernetes                 | Điều phối service, worker, stateful dependency, bootstrap job và môi trường demo local.                  |
 | React/Vite                 | Dashboard realtime cho trạng thái request, metric pipeline và kết quả dự đoán.                           |
 
@@ -217,6 +219,8 @@ kubectl -n bioinformatics port-forward svc/notification-service 8004:8003
 kubectl -n bioinformatics port-forward svc/rabbitmq 15673:15672
 kubectl -n bioinformatics port-forward svc/spark-master 8081:8080
 kubectl -n bioinformatics port-forward svc/spark-worker 8082:8081
+kubectl -n bioinformatics port-forward svc/prometheus 9090:9090
+kubectl -n bioinformatics port-forward svc/grafana 3000:3000
 ```
 
 | Thành phần           | URL                            |
@@ -228,6 +232,8 @@ kubectl -n bioinformatics port-forward svc/spark-worker 8082:8081
 | RabbitMQ Management  | `http://localhost:15673`       |
 | Spark Master UI      | `http://localhost:8081`        |
 | Spark Worker UI      | `http://localhost:8082`        |
+| Prometheus           | `http://localhost:9090`        |
+| Grafana              | `http://localhost:3000`        |
 
 ## Kubernetes và quorum
 

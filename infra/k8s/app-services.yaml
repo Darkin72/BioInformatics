@@ -28,7 +28,7 @@ spec:
     spec:
       initContainers:
         - name: wait-for-deps
-          image: bioinformatics/backend:local
+          image: bioinformatics/backend:metrics-local
           imagePullPolicy: IfNotPresent
           command: ["python", "-c"]
           args:
@@ -49,7 +49,7 @@ spec:
                           time.sleep(5)
       containers:
         - name: serving-api
-          image: bioinformatics/backend:local
+          image: bioinformatics/backend:metrics-local
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

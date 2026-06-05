@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter as PrometheusCounter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel, ConfigDict
 
 from apps.serving_api.src.cafa6_client import (
@@ -279,7 +279,7 @@ security = HTTPBearer()
 app = FastAPI(title="BioInformatics Serving API")
 REVOKED_TOKEN_IDS: set[str] = set()
 
-HTTP_REQUESTS_TOTAL = Counter(
+HTTP_REQUESTS_TOTAL = PrometheusCounter(
     "fastapi_requests_total",
     "Total HTTP requests handled by the Serving API.",
     ["method", "path", "status"],
